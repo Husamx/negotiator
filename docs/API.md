@@ -1,11 +1,8 @@
 # API (v0.1) — Contract Outline
 
-> This is an implementation-oriented outline. Exact fields may evolve, but endpoints and semantics should remain stable.
-
 ## 1. Conventions
 - JSON over HTTPS
-- Streaming: Server-Sent Events (SSE) or WebSocket (choose one in implementation)
-- All objects are scoped by authenticated `user_id`
+- Streaming: SSE (recommended) or WebSocket (choose one)
 - Tier gating enforced server-side
 
 ## 2. Sessions
@@ -14,81 +11,81 @@
 `POST /sessions`
 
 Request:
-- `topic_text` (string)
-- `counterparty_style` (optional)
-- `attached_entity_ids` (optional list)
+- topic_text (string)
+- counterparty_style (optional)
+- attached_entity_ids (optional list)
 
 Response:
-- `session_id`
-- `template_id`
-- `proposed_entities` (optional)
-- `intake_questions` (list)
+- session_id
+- template_id
+- proposed_entities (optional)
+- intake_questions (list)
+- optional: grounding_decision (if precomputed)
 
 ### 2.2 Post a message (roleplay)
 `POST /sessions/{session_id}/messages`
 
 Request:
-- `content` (string)
-- `channel` = "roleplay" (standard & premium)
-- (premium only) optionally `channel="coach_private"` for private notes to coach
+- content (string)
+- channel = "roleplay" (standard & premium)
+- (premium only) channel="coach_private" for private notes
+- enable_web_grounding (optional bool, default true)
+- web_grounding_trigger (optional enum: auto|user_requested)   # server validates
 
 Response (non-streaming):
-- counterparty message (roleplay)
-- optional extracted_facts (session-only suggestions)
+- counterparty_message
+- optional: coach_panel (premium)
+- optional: grounding_pack (when run this turn)
+- extracted_facts (session-only candidates)
 
 Streaming variant:
-- stream roleplay tokens as they are generated
-- premium: optionally stream coach panel updates separately
+- stream roleplay tokens
+- premium: stream coach panel separately
+
+Hard rule:
+- channel="coach_private" MUST NOT update counterparty disclosure/knowledge state.
 
 ### 2.3 End session
 `POST /sessions/{session_id}/end`
 Response:
-- Standard: `recap` (descriptive)
-- Premium: `after_action_report` + recap
+- Standard: recap (descriptive)
+- Premium: after_action_report + recap
 
 ### 2.4 Memory review commit
 `POST /sessions/{session_id}/memory-review`
-
 Request:
-- `decisions`: list of { fact_id, decision: save_global|save_session_only|discard }
-
+- decisions: [{ fact_id, decision: save_global|save_session_only|discard }]
 Response:
 - updated KG summary
 
-## 3. Knowledge Graph (World)
+## 3. Web grounding (explicit endpoint)
+Optional explicit endpoint (useful for UI refresh/debug):
+`POST /sessions/{session_id}/grounding`
 
-### 3.1 Entities
-- `GET /entities?query=...`
-- `POST /entities`
-- `PATCH /entities/{entity_id}`
-- `DELETE /entities/{entity_id}`
+Request:
+- mode: auto|user_requested
+- user_question (optional)
+- region_hint (optional)
+- max_queries (optional)
+Response:
+- grounding_pack
+- sources
+- budget_spent
 
-### 3.2 Facts
-- `GET /facts?entity_id=...`
-- `POST /facts`
-- `PATCH /facts/{fact_id}`
-- `DELETE /facts/{fact_id}`
+## 4. Knowledge Graph (World)
+- GET/POST/PATCH/DELETE /entities
+- GET/POST/PATCH/DELETE /facts
+- GET/POST/DELETE /relationships
 
-### 3.3 Relationships
-- `GET /relationships?entity_id=...`
-- `POST /relationships`
-- `DELETE /relationships/{edge_id}`
+## 5. Visibility (epistemics)
+- GET/POST/PATCH/DELETE /knowledge-edges
+Premium-only editing (Standard read-only at API level).
 
-## 4. Epistemic graph
-- `GET /knowledge-edges?knower_entity_id=...`
-- `POST /knowledge-edges`
-- `PATCH /knowledge-edges/{knowledge_edge_id}`
-- `DELETE /knowledge-edges/{knowledge_edge_id}`
+## 6. Templates
+- GET /templates (official)
+- GET /templates/drafts (per-user)
+- POST /templates/proposals (enqueue review)
 
-Premium-only: editing is allowed; Standard may be read-only at API level.
-
-## 5. Templates
-- `GET /templates` (official)
-- `GET /templates/drafts` (per-user)
-- `POST /templates/proposals` (create a proposal / enqueue review)
-
-## 6. Admin (internal)
-- `GET /admin/template-proposals`
-- `POST /admin/template-proposals/{id}/approve`
-- `POST /admin/template-proposals/{id}/reject`
-- `POST /admin/template-proposals/{id}/edit`
+## 7. Admin (internal)
+- GET /admin/template-proposals
+- POST /admin/template-proposals/{id}/approve|reject|edit

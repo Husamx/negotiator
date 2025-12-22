@@ -1,7 +1,6 @@
 # Requirements (v0.1)
 
-> This document is the **source of truth** for what the app must do in v0.1.  
-> It is intentionally detailed so devs can implement directly.
+> This document is the **source of truth** for what the app must do in v0.1.
 
 ## 1. Product scope
 
@@ -9,46 +8,48 @@
 Build a chat-based rehearsal app where:
 - Every negotiation is a **chat session** (“role play”).
 - Users can **reuse entities** (people, places, organizations, offers, leases, etc.) across sessions via a persistent **Knowledge Graph (KG)**.
-- The role play stays realistic by modeling **who knows what** (epistemic knowledge).
+- The role play stays realistic by modeling **who knows what** (visibility / epistemic constraints).
 - **Standard** is role play only; **Premium** adds coaching.
-- The app can handle “Other” topics by generating **draft templates** (human-reviewed before becoming official).
+- The app can use **web grounding** (internet search RAG) when topic realism requires common knowledge (culture/norms/policy).
 
 ### 1.2 Target audience (v0.1)
 - People in their twenties.
-- Primary use cases: interpersonal disagreements + everyday life negotiations.
+- Primary templates: interpersonal disagreements + everyday life negotiations.
 
 ### 1.3 Non-goals (v0.1)
 - No automated outreach (sending emails/SMS in-app).
 - No multi-party negotiation (one user + one counterparty per session).
-- No real-world verification of facts (no scraping/OSINT).
+- No real-world verification of personal facts (no OSINT).
 - No self-hosted LLM infrastructure (external provider only).
+- No full “graph visualization” UI.
 
 ## 2. Subscription tiers
 
 ### 2.1 Standard (default)
-**Standard includes**
+Standard includes:
 - Role play chat as the counterparty.
-- Topic description (1–2 sentences) + minimal intake questions to configure the role play.
+- Topic description (1–2 sentences) + minimal intake questions.
 - Entity tray: attach existing entities from KG or create new.
 - KG management: create/edit/delete entities and facts.
+- Web grounding (Tavily) only when required (see section 12).
 - Descriptive session recap (what happened) — **no advice**.
 
-**Standard must NOT**
+Standard must NOT:
 - Suggest what the user should say (“you should…”).
 - Critique the user (“you conceded too early…”).
-- Provide a negotiation strategy or recommended plan.
-- Provide scenario trees or “next best move” guidance.
+- Provide a negotiation strategy plan.
+- Provide “next best move” guidance.
 
-**Hard requirement:** Standard must never “accidentally coach” through roleplay outputs.
+Hard requirement: Standard must never “accidentally coach” through roleplay outputs.
 
 ### 2.2 Premium
-Premium adds (in separate UI channel from role play):
+Premium adds (separate UI channel from role play):
 - Suggested replies (A/B/C) with intent labels.
 - Strategy plan (anchor, concessions ladder, questions, red lines).
 - Critique after user turns (clarity, concessions, info disclosure).
 - Scenario tree (2–5 likely branches).
 - After-action report (script v2 + optional follow-up message templates).
-- Advanced epistemic controls (edit who knows what; confidence/source).
+- Advanced visibility controls (edit what the counterparty knows; confidence/source).
 
 ## 3. Core data concepts
 
@@ -58,54 +59,47 @@ An **Entity** is anything involved in the session:
 - Organization: company, agency
 - Artifact: offer, lease, contract, plan, agreement
 - Place: property, flat, office (optional)
-- Other: any user-defined entity type (allowed via custom entities)
+- Other: any user-defined entity type
 
 ### 3.2 Facts (atomic, reified)
 A **Fact** is an atomic statement with provenance, e.g.:
-- `Offer.base_salary = 50000 GBP`
+- `Offer.base_salary = 125000 GBP`
 - `Lease.end_date = 2026-02-11`
-Facts must be:
-- typed (value_type, unit)
-- timestamped
-- editable/deletable
-- attributable to a source (user-entered, model-extracted, etc.)
+Facts must be typed, timestamped, editable/deletable, and attributable to a source.
 
-### 3.3 Two-graph model
+### 3.3 Two-graph model (world + epistemic)
 Maintain two related graphs:
 
-1) **World Graph** (entities, relationships, facts)
-- “What exists / what is true” (user-confirmed or user-entered).
+1) **World Graph**: entities, relationships, facts (“what exists / is true”)
+2) **Visibility/Epistemic Model**: who knows what (“what the counterparty can use”)
 
-2) **Epistemic Graph** (knowledge/visibility)
-- “Who knows what”:
-  - Employer typically knows salary, not rent.
-  - Partner may know employer name, not office details.
-
-The epistemic graph is the key constraint for realistic role play.
+v0.1 implementation: **sparse** epistemic storage + **runtime priors + disclosure tracker**.
+- Do NOT store unknown edges exhaustively.
+- Absence of an edge means **UNKNOWN**.
 
 ### 3.4 Sessions
 A **Session** is a single role play chat:
 - attaches a subset of KG entities (Entity Tray)
 - has a topic/template
-- stores chat messages
-- stores session-only extracted facts until user confirms saving
+- stores messages
+- stores extracted facts as session-only candidates until user confirms saving
 
 ## 4. Templates & topic understanding
 
 ### 4.1 Official template library (v0.1)
-Ship with the following templates (interpersonal + everyday life):
-1. Roommate conflict (chores/noise/guests/bills)
-2. Relationship disagreement (boundaries/communication/priorities)
-3. Dating / situationship (expectations/exclusivity/time)
-4. Friendship conflict (respect/ghosting/loyalty)
-5. Money with friends (owed money/splitting/trips)
-6. Family / parental disagreement (independence/expectations/finances)
-7. Workplace boundary / manager conflict (scope/feedback/recognition)
+Ship with:
+1. Roommate conflict
+2. Relationship disagreement
+3. Dating / situationship expectations
+4. Friendship conflict
+5. Money with friends
+6. Family / parental disagreement
+7. Workplace boundary / manager conflict
 8. Salary offer / compensation negotiation
 9. Rent / landlord / lease renewal
-10. Refund / complaint dispute (consumer)
+10. Refund / complaint dispute
 
-### 4.2 “Other” topic flow (required)
+### 4.2 “Other” topic flow
 If topic doesn’t match official templates with sufficient confidence:
 - use `template_id = other`
 - run generic minimal intake (≤ 5 questions)
@@ -113,35 +107,27 @@ If topic doesn’t match official templates with sufficient confidence:
 - trigger Template Agent to propose a draft template (local + review queue)
 
 ### 4.3 Template structure (requirements)
-Each template must define:
+Each template defines:
 - required entities/roles (User, Counterparty, optional third parties)
 - slot schema (required + optional fields)
 - question policy (minimal questions, skip logic, max questions target)
-- role play parameters (default counterparty persona, typical objections)
-- safety notes (if topic may intersect sensitive content)
+- role play parameters (default persona, typical objections)
+- safety notes
 
-### 4.4 Template Agent (draft template generation + patch proposals)
-**Trigger A: unknown topic**
-- router selects `other` → Template Agent generates a candidate template.
+### 4.4 Template Agent
+Triggers:
+- Unknown topic (`other`) → generate a user-local TemplateDraft + TemplateProposal.
+- Mismatch signals (custom slots, repeated edits, low realism ratings) → propose a patch.
 
-**Trigger B: template mismatch**
-Even if an official template is selected, trigger Template Agent when:
-- user adds “custom slots” repeatedly
-- question optimizer cannot reach readiness without asking off-schema questions
-- high edit/rejection rate suggests schema mismatch
-- new entity types frequently appear for this template
-
-**Template Agent output is a proposal, not an automatic change.**
-- Proposal stored as `TemplateDraft` for that user (immediately usable for that user)
-- Proposal queued for human review before becoming official
-
-Human review is described in `docs/ADMIN_REVIEW.md`.
+TemplateDraft: usable immediately for that user, marked `draft=true`.
+TemplateProposal: queued for human review before becoming official.
 
 ## 5. UX requirements
 
-### 5.1 Design principle
+### 5.1 Design
 - Chat-first; minimal screens.
-- Memory is user-owned and visible; review-gated saving.
+- Memory is user-owned and review-gated.
+- Web grounding is transparent: show citations and what was retrieved.
 
 ### 5.2 Screens
 1) Home / Sessions list
@@ -150,169 +136,160 @@ Human review is described in `docs/ADMIN_REVIEW.md`.
 4) Memory manager (KG editor)
 5) (Internal) Admin review tool
 
-### 5.3 New Session setup wizard
-**Step 1: Topic**
-- Text or voice-to-text
-- 1–2 sentence description
-
-**Step 2: Entities**
-- Show proposed entities as cards/chips
-- Allow attach from memory (search)
-- Allow create new (simple form)
-- Allow edit/remove entities before starting
-
-**Step 3: Minimal questions**
-- Ask the minimum number of questions needed for roleplay realism
-- Target ≤ 7 questions typical case
-- Use skip logic based on earlier answers
-- Start session
+### 5.3 New Session wizard
+Step 1: Topic (text or voice-to-text; 1–2 sentences)
+Step 2: Entities (attach existing or create new)
+Step 3: Minimal questions (≤ 7 typical; skip logic)
 
 ### 5.4 Session chat
 Always:
-- chat transcript
-- composer
+- transcript + composer
 - entity tray (attached entities)
 - counterparty style selector: Polite / Neutral / Tough / Busy / Defensive
 
 Standard:
 - role play only
-- session recap allowed but descriptive only
+- descriptive recap allowed (no advice)
 
 Premium:
-- coaching panel (separate channel)
-- “What they know” editor
+- coaching panel
+- visibility editor (“what they know”)
 
-### 5.5 Memory review (end of session, required)
+### 5.5 Memory review (end of session)
 - List extracted facts discovered during session
 - For each: Save globally / Save session-only / Discard
 - Show provenance: “From message #N”
 - Default: extracted facts are **session-only** until confirmed
 
-### 5.6 Memory manager (KG)
-- Search and browse entities
-- Edit/delete entities and facts
-- “Delete all memory” (hard delete + confirmation)
-- Standard: view-only “What they know”
-- Premium: edit epistemic edges
-
-## 6. Role play requirements (Standard and Premium)
+## 6. Role play requirements
 
 ### 6.1 Counterparty simulator constraints
-- Must stay in character as the counterparty.
-- Must negotiate realistically with consistent persona.
-- Must not access facts the counterparty does not know (epistemic filter).
-- Must not output advice or critique (especially in Standard).
+- Stay in character as counterparty; consistent persona.
+- Respect visibility: must not access facts counterparty does not know.
+- Must not output advice/critique (especially Standard).
 
-### 6.2 Counterparty style variants
-User can select a style that affects tone and negotiation posture:
+### 6.2 Style variants
 - Polite / Neutral / Tough / Busy / Defensive
 
-### 6.3 “Replay variant” (optional in v0.1; recommended)
-Allow rerunning the session setup with different counterparty style and the same entities.
-
 ## 7. Coaching requirements (Premium only)
+Separate channel from role play:
+- suggested replies A/B/C
+- strategy plan
+- critique per turn
+- scenario branches (2–5)
+- after-action report
 
-### 7.1 Coach output channels
-- Coach output must be separate from roleplay output.
-- Coach must never speak “as the counterparty”.
-- Coach can reference memory and epistemic model explicitly.
-
-### 7.2 Coach features
-- Suggested replies A/B/C (short, actionable, different styles)
-- Strategy plan (anchor, concessions ladder, questions, red lines)
-- Critique per turn (clarity, concessions timing, info leakage)
-- Scenario tree (2–5 likely next branches)
-- After-action report + script v2 + optional follow-up message
-
-## 8. Knowledge Graph requirements (World graph)
+## 8. Knowledge Graph (World graph)
 
 ### 8.1 Entities
-- CRUD (create/edit/delete)
-- User-owned (scoped per user)
-- Support custom entity types (fallback “Custom”)
+CRUD, user-owned, custom entity types allowed.
 
 ### 8.2 Facts
-- Atomic, typed, timestamped
-- Each fact must track provenance (see section 10)
-- Facts can be global or session-only
+Atomic, typed, timestamped, provenance-tracked.
+Scope: global or session-only.
 
 ### 8.3 Relationships
-- Typed edges between entities (WORKS_AT, LIVES_WITH, DATES, PARENT_OF, RENTED_FROM, NEGOTIATING_WITH, etc.)
-- Relationship creation can seed epistemic priors (see section 9)
+Typed edges (WORKS_AT, LIVES_WITH, DATES, PARENT_OF, RENTED_FROM, etc.)
 
-## 9. Epistemic graph requirements (who knows what)
+## 9. Visibility/Epistemic model (“who knows what”)
 
-### 9.1 Knowledge edges
-Represent `KNOWS(knower_entity -> fact)` with:
-- status: confirmed / assumed / unknown / false_belief
-- confidence: 0..1
-- source: user_told / observed / inferred / public / third_party
-- scope: global or session:<id>
-- timestamps
+### 9.1 Sparse storage rule
+Do NOT store explicit `unknown` edges for all (entity × fact). Absence means UNKNOWN.
+
+Store knowledge edges only for:
+- confirmed knowledge (disclosed in chat)
+- user overrides (explicitly set)
+- optional false beliefs (future)
 
 ### 9.2 Priors (relationship-based defaults)
-When a relationship is created in the World graph, seed epistemic edges using priors:
-- landlord knows rent and lease terms
-- employer knows salary and job title
-- roommate knows shared bills
-- partner may know employer name (if user chooses to store it)
-Priors must never override user edits.
+When a relationship is created, seed *priors* (rules) for what categories are likely known.
+Priors affect **visibility only** and must never invent missing values.
 
-### 9.3 Disclosure rules during chat
-- If user says a fact in the roleplay chat, the counterparty gains knowledge of that fact for this session scope.
-- If user says a fact only to the Premium coach, counterparty does NOT gain knowledge.
+### 9.3 Disclosure rules
+- If the user states a fact in roleplay chat, the counterparty gains knowledge of that fact (session scope).
+- If user states it only to Premium coach, counterparty does NOT gain knowledge.
+
+### 9.4 Unknown must remain unknown (hard requirement)
+- Agents must not assume missing values or private facts.
+- Orchestrator must include explicit `unknown_required_slots` and/or `unknown_by_design_note` in LLM context.
+- If unknown blocks realism, ask a clarifying question (in-character for roleplay) or branch with labeled assumptions (Premium only).
 
 ## 10. Provenance & telemetry (training-ready)
 
-### 10.1 Fact provenance (required)
+### 10.1 Fact provenance
 Every fact must have:
 - source_type: user_entered | user_confirmed_extraction | model_extracted | inferred | external
-- source_ref: session_id, message_id, ui_form_id, etc.
+- source_ref: session_id/message_id/ui_form_id/etc.
 - model_version / prompt_version when relevant
-- confidence
-- timestamps
+- confidence, timestamps
 
-### 10.2 Event sourcing (required)
-All edits to entities/facts/knowledge edges must emit immutable events (see `docs/EVENTS.md`).
+### 10.2 Event sourcing
+All edits to entities/facts/knowledge edges emit immutable events (`docs/EVENTS.md`).
 
-### 10.3 Consent & privacy controls (required)
-Provide separate opt-ins:
+### 10.3 Consent & privacy controls
+Separate opt-ins:
 1) Save to personal memory (KG)
-2) Share anonymized telemetry to improve app
-3) Share raw conversation text for training (explicit, highest sensitivity)
+2) Share anonymized telemetry
+3) Share raw conversation text (explicit)
 
-### 10.4 Deletion propagation (required)
-Deleting facts/entities must propagate to:
-- KG tables
-- derived stores (embeddings/caches if added later)
-- training dataset builder (via tombstones)
+### 10.4 Deletion propagation
+Deleting facts/entities must propagate to derived stores (embeddings/caches later) via tombstones.
 
-## 11. External LLM provider requirement
-
-### 11.1 Provider-agnostic LLM gateway
-- The backend must call an external LLM provider via a gateway interface:
+## 11. External LLM provider
+- Must call an external LLM provider via a provider-agnostic gateway:
   - streaming support
-  - retries
-  - timeouts
-  - cost/usage accounting hooks
+  - retries/timeouts
+  - usage accounting hooks
+- No self-hosting assumptions in v0.1.
 
-### 11.2 No self-hosting assumption
-- No vLLM/llama.cpp deployment requirements in v0.1.
+## 12. Web grounding (internet search RAG) — Tavily
 
-## 12. Acceptance criteria (v0.1 MVP)
+### 12.1 Why
+If the user’s topic requires common knowledge from the internet (culture/norms/etiquette/policy/common practices),
+the app should fetch grounded context to avoid interrogating the user for every detail.
 
-### Standard
-- Start session with 1–2 sentence topic, attach entities, answer minimal questions, enter roleplay chat.
-- Counterparty roleplay is consistent and respects epistemic knowledge.
-- No coaching language in Standard outputs.
-- User can reuse entities across sessions.
-- End-session memory review saves/keeps/discards extracted facts.
+### 12.2 Provider
+Use **Tavily** Search API in v0.1.
 
-### Premium
-- Coaching panel provides suggestions and critique separate from roleplay.
-- Disclosure tracking (chat vs coach) works.
-- Suggestion “used” events logged.
+### 12.3 Cost control (hard requirements)
+- Do not search unless needed.
+- Default budget:
+  - Standard: max 2 searches per session (typical); max 1 mid-chat search unless user asks.
+  - Premium: max 4 searches per session.
+- Default parameters:
+  - search_depth = basic (avoid advanced unless explicitly needed)
+  - max_results = 5
+- Cache search results by normalized query + region with TTL (24–72h).
 
-### Template evolution
-- `other` triggers draft template generation and review queue entry.
-- Template patch proposals generated when mismatch signals occur.
+### 12.4 Search agent responsibilities
+Implement a small web-grounding pipeline:
+1) NeedSearch Gate (rules-first; LLM only if uncertain)
+2) QueryPlanner (max 1–3 queries)
+3) Tavily Search
+4) EvidenceSynthesizer → Grounding Pack (bullets with citations, plus “uncertain/disputed”)
+
+Hard rule: Do not invent facts; everything in the Grounding Pack must cite retrieved sources or be labeled unknown.
+
+### 12.5 UX requirements
+- When web grounding is used, surface:
+  - “Used web sources” indicator
+  - bullet summary with citations
+  - what questions remain unanswered (unknowns)
+
+See `docs/WEB_GROUNDING.md` for schemas and endpoints.
+
+## 13. Acceptance criteria (v0.1 MVP)
+
+Standard:
+- Create session from 1–2 sentence topic, attach entities, answer minimal questions, start roleplay.
+- Counterparty respects visibility; no coaching language.
+- Web grounding is only invoked when needed; citations shown when used.
+- Memory review saves/keeps/discards extracted facts.
+
+Premium:
+- Coaching panel provides suggestions/critique separate from roleplay.
+- Disclosure tracking works (chat vs coach).
+- Web grounding can feed coaching with citations.
+
+Template evolution:
+- `other` triggers draft template generation + review queue entry.
