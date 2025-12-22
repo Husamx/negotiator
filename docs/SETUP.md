@@ -17,12 +17,12 @@ Copy `.env.example` to `.env` and fill required values.
 
 ## Run (backend)
 ```bash
-poetry run uvicorn src.nego.api.main:app --reload --port 8000
+poetry run uvicorn src.negot.api.main:app --reload --port 8000
 ```
 
 ## Run (Streamlit UI)
 ```bash
-poetry run streamlit run src/nego/ui/app.py
+poetry run streamlit run src/negot/ui/app.py
 ```
 
 ## Migrations
