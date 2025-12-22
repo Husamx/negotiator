@@ -7,14 +7,19 @@ these functions rather than interacting with the ORM directly.
 """
 from __future__ import annotations
 
+import json
 from typing import Iterable, List, Optional
 
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import get_settings
 from ..events import emit_event
 from ..models import (
     Entity,
+    Message,
+    MessageRole,
     Fact,
     EventType,
     KnowledgeEdge,
@@ -25,6 +30,7 @@ from ..models import (
     Session,
     SessionEntity,
 )
+from .llm_utils import acompletion_with_retry, extract_completion_text
 
 
 async def list_entities(db: AsyncSession, user_id: int) -> List[Entity]:
@@ -105,10 +111,26 @@ async def delete_entity(db: AsyncSession, entity: Entity) -> None:
     )
 
 
-async def attach_entities_to_session(db: AsyncSession, session: Session, entities: Iterable[Entity]) -> None:
-    """Associate a set of entities with a session."""
-    for entity in entities:
-        session.attached_entities.append(entity)
+async def attach_entities_to_session(
+    db: AsyncSession, session: Session, entities: Iterable[Entity]
+) -> None:
+    """Associate a set of entities with a session without lazy-loading."""
+    entity_ids = [entity.id for entity in entities if entity.id is not None]
+    if not entity_ids:
+        return
+    if session.id is None:
+        await db.flush()
+    result = await db.execute(
+        select(SessionEntity.entity_id).where(
+            SessionEntity.session_id == session.id,
+            SessionEntity.entity_id.in_(entity_ids),
+        )
+    )
+    existing = set(result.scalars().all())
+    for entity_id in entity_ids:
+        if entity_id in existing:
+            continue
+        db.add(SessionEntity(session_id=session.id, entity_id=entity_id))
     await db.flush()
 
 
@@ -117,22 +139,115 @@ async def compute_visible_facts(
 ) -> List[dict]:
     """Compute facts visible to the counterparty in a session.
 
-    For the MVP we consider that all facts attached to the session's
-    entities and marked as global scope are visible. A more complete
-    implementation would consider knowledge edges and priors.
+    This uses an LLM to select visible facts from candidate facts and
+    knowledge edges without inventing new facts.
     """
+    class VisibleFactsSelection(BaseModel):
+        visible_fact_ids: List[int] = Field(default_factory=list)
+        rationale: Optional[str] = None
+
     result = await db.execute(
         select(SessionEntity.entity_id).where(SessionEntity.session_id == session.id)
     )
     entity_ids = result.scalars().all()
     if not entity_ids:
         return []
-    result = await db.execute(
-        select(Fact).where(
-            Fact.subject_entity_id.in_(entity_ids), Fact.scope == KnowledgeScope.global_scope
-        )
-    )
+    result = await db.execute(select(Fact).where(Fact.subject_entity_id.in_(entity_ids)))
     facts = result.scalars().all()
+    if not facts:
+        return []
+    fact_ids = [f.id for f in facts]
+    edge_result = await db.execute(
+        select(KnowledgeEdge).where(KnowledgeEdge.fact_id.in_(fact_ids))
+    )
+    edges = edge_result.scalars().all()
+    disclosed_fact_ids: List[int] = []
+    session_fact_ids = [
+        f.id for f in facts if f.scope == KnowledgeScope.session_scope and f.source_ref
+    ]
+    if session_fact_ids:
+        message_ids = []
+        for f in facts:
+            if f.id not in session_fact_ids or not f.source_ref:
+                continue
+            if f.source_ref.startswith("message:"):
+                _, message_id = f.source_ref.split(":", 1)
+                if message_id.isdigit():
+                    message_ids.append(int(message_id))
+        if message_ids:
+            message_result = await db.execute(
+                select(Message.id, Message.role).where(Message.id.in_(message_ids))
+            )
+            roles = {row[0]: row[1] for row in message_result.all()}
+            for f in facts:
+                if not f.source_ref or not f.source_ref.startswith("message:"):
+                    continue
+                _, message_id = f.source_ref.split(":", 1)
+                if message_id.isdigit() and roles.get(int(message_id)) == MessageRole.user:
+                    disclosed_fact_ids.append(f.id)
+    payload = {
+        "facts": [
+            {
+                "id": f.id,
+                "subject_entity_id": f.subject_entity_id,
+                "key": f.key,
+                "value": f.value,
+                "scope": f.scope.value if hasattr(f.scope, "value") else str(f.scope),
+                "source_type": f.source_type,
+                "source_ref": f.source_ref,
+            }
+            for f in facts
+        ],
+        "knowledge_edges": [
+            {
+                "id": e.id,
+                "knower_entity_id": e.knower_entity_id,
+                "fact_id": e.fact_id,
+                "status": e.status.value if hasattr(e.status, "value") else str(e.status),
+                "source": e.source.value if hasattr(e.source, "value") else str(e.source),
+                "scope": e.scope.value if hasattr(e.scope, "value") else str(e.scope),
+                "confidence": e.confidence,
+            }
+            for e in edges
+        ],
+        "counterparty_entity_id": counterparty_entity_id,
+        "disclosed_fact_ids": disclosed_fact_ids,
+    }
+    settings = get_settings()
+    if not settings.litellm_model:
+        raise RuntimeError("LiteLLM model is not configured; cannot select visible facts.")
+    system_prompt = (
+        "You are the Visibility Agent. Select which fact IDs are visible to the "
+        "counterparty. Only choose from the provided facts. Do not invent facts. "
+        "Use knowledge_edges and disclosed_fact_ids. If counterparty_entity_id is null, "
+        "only include facts that are explicitly disclosed or marked as public in knowledge_edges. "
+        'Output JSON only: {"visible_fact_ids": [..], "rationale": "..."}'
+    )
+    completion_kwargs = {
+        "model": settings.litellm_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(payload)},
+        ],
+        "temperature": 0.0,
+    }
+    if settings.litellm_api_key:
+        completion_kwargs["api_key"] = settings.litellm_api_key
+    if settings.litellm_base_url:
+        completion_kwargs["base_url"] = settings.litellm_base_url
+    try:
+        from instructor import from_litellm
+
+        client = from_litellm(acompletion_with_retry)
+        response = await client(response_model=VisibleFactsSelection, **completion_kwargs)
+        selection = response
+    except Exception:
+        response = await acompletion_with_retry(**completion_kwargs)
+        content = extract_completion_text(response)
+        if not content:
+            raise RuntimeError("LiteLLM returned an empty visibility selection.")
+        selection = VisibleFactsSelection.model_validate_json(content)
+    selected_ids = {fid for fid in selection.visible_fact_ids if fid in fact_ids}
     return [
         {
             "id": f.id,
@@ -142,6 +257,7 @@ async def compute_visible_facts(
             "scope": f.scope,
         }
         for f in facts
+        if f.id in selected_ids
     ]
 
 

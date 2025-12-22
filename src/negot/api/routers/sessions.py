@@ -7,7 +7,7 @@ contract outline.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Path, Query
+from fastapi import APIRouter, Path
 from fastapi.responses import StreamingResponse
 
 from ..dependencies import CurrentUser, DatabaseSession
@@ -21,7 +21,6 @@ from ...core.schemas import (
     MemoryReviewRequest,
     MemoryReviewResponse,
     PostMessageRequest,
-    PostMessageResponse,
     SessionAttachRequest,
     SessionDetail,
     SessionEventOut,
@@ -53,22 +52,18 @@ async def create_session(
     return await sessions_service.create_session(db, user, req)
 
 
-@router.post("/{session_id}/messages", response_model=PostMessageResponse)
+@router.post("/{session_id}/messages")
 async def post_message(
     req: PostMessageRequest,
     db: DatabaseSession,
     user: CurrentUser,
     session_id: int = Path(..., description="Identifier of the session."),
-    stream: bool = Query(False, description="Stream roleplay response via SSE."),
-) -> PostMessageResponse | StreamingResponse:
-    """Post a message to a session and generate the next turn."""
-    if stream and req.channel == "roleplay":
-        await sessions_service.ensure_session_active(db, user, session_id)
-        return StreamingResponse(
-            sessions_service.stream_message(db, user, session_id, req),
-            media_type="text/event-stream",
-        )
-    return await sessions_service.post_message(db, user, session_id, req)
+) -> StreamingResponse:
+    """Post a message to a session and stream the next turn via SSE."""
+    return StreamingResponse(
+        sessions_service.stream_message(db, user, session_id, req),
+        media_type="text/event-stream",
+    )
 
 
 @router.get("/{session_id}", response_model=SessionDetail)

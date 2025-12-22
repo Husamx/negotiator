@@ -86,6 +86,18 @@ def _ensure_user_state() -> None:
             "questions": [],
             "answers": {},
         }
+    if "new_session_entity_select_pending" not in st.session_state:
+        st.session_state.new_session_entity_select_pending = []
+    if "intake_queue" not in st.session_state:
+        st.session_state.intake_queue = []
+    if "intake_answers" not in st.session_state:
+        st.session_state.intake_answers = {}
+    if "intake_transcript" not in st.session_state:
+        st.session_state.intake_transcript = []
+    if "intake_session_id" not in st.session_state:
+        st.session_state.intake_session_id = None
+    if "intake_summary" not in st.session_state:
+        st.session_state.intake_summary = None
     if "allow_web_grounding" not in st.session_state:
         st.session_state.allow_web_grounding = True
     if "session_recap" not in st.session_state:
@@ -136,6 +148,9 @@ def _reset_new_session() -> None:
         "questions": [],
         "answers": {},
     }
+    st.session_state.new_session_entity_select_pending = []
+    if "new_session_entity_select" in st.session_state:
+        del st.session_state["new_session_entity_select"]
 
 
 def _attribute_rows(state_key: str, initial: Optional[dict] = None) -> Dict[str, str]:
@@ -177,6 +192,23 @@ def _attribute_rows(state_key: str, initial: Optional[dict] = None) -> Dict[str,
         if key:
             attrs[key] = row.get("value", "")
     return attrs
+
+
+def _build_intake_summary(
+    topic_text: str,
+    template_id: Optional[str],
+    questions: List[str],
+    answers: Dict[str, str],
+) -> str:
+    lines = []
+    if topic_text:
+        lines.append(f"Topic: {topic_text}")
+    if template_id:
+        lines.append(f"Template: {template_id}")
+    for question in questions:
+        answer = answers.get(question, "")
+        lines.append(f"{question} Answer: {answer}")
+    return "Intake summary:\n" + "\n".join(lines)
 
 
 def _load_session_history(session_id: int) -> List[Dict[str, Any]]:
@@ -332,16 +364,28 @@ def _render_new_session_panel() -> None:
         st.session_state.new_session["counterparty_style"] = style
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("Reset"):
+            if st.button("Reset", key="new_session_reset_step1"):
                 _reset_new_session()
         with col2:
-            if st.button("Next", type="primary") and topic:
+            if st.button("Next", type="primary", key="new_session_next_step1") and topic:
                 st.session_state.new_session_step = 2
     elif step == 2:
         st.markdown("**Step 2: Entities**")
         entities_resp = _api_get("/entities", st.session_state.user_id)
         entities = entities_resp.json() if entities_resp.status_code == 200 else []
         entity_map = {f"{ent['name']} ({ent['type']})": ent["id"] for ent in entities}
+        pending = [
+            label
+            for label in st.session_state.new_session_entity_select_pending
+            if label in entity_map
+        ]
+        if pending:
+            current = st.session_state.get("new_session_entity_select", [])
+            merged = list(dict.fromkeys(current + pending))
+            st.session_state["new_session_entity_select"] = merged
+            st.session_state.new_session_entity_select_pending = []
+        elif st.session_state.new_session_entity_select_pending:
+            st.session_state.new_session_entity_select_pending = []
         selected_labels = st.multiselect(
             "Attach existing entities",
             options=list(entity_map.keys()),
@@ -350,16 +394,17 @@ def _render_new_session_panel() -> None:
                 for label, eid in entity_map.items()
                 if eid in st.session_state.new_session["entity_ids"]
             ],
+            key="new_session_entity_select",
         )
         st.session_state.new_session["entity_ids"] = [
             entity_map[label] for label in selected_labels
         ]
         with st.expander("Create new entity", expanded=False):
-            ent_type = st.text_input("Type", value="person")
-            ent_name = st.text_input("Name")
+            ent_type = st.text_input("Type", value="person", key="new_session_entity_type")
+            ent_name = st.text_input("Name", key="new_session_entity_name")
             st.markdown("Attributes")
             ent_attrs = _attribute_rows("new_entity_attrs")
-            if st.button("Create entity"):
+            if st.button("Create entity", key="new_session_entity_create"):
                 if not ent_name:
                     st.error("Entity name is required.")
                 else:
@@ -369,15 +414,25 @@ def _render_new_session_panel() -> None:
                         {"type": ent_type, "name": ent_name, "attributes": ent_attrs},
                     )
                     if resp.status_code == 201:
-                        st.success("Entity created.")
+                        entity = resp.json()
+                        entity_id = entity.get("id")
+                        if entity_id is not None:
+                            current_ids = st.session_state.new_session["entity_ids"]
+                            if entity_id not in current_ids:
+                                st.session_state.new_session["entity_ids"] = current_ids + [entity_id]
+                            label = f"{entity.get('name')} ({entity.get('type')})"
+                            if label:
+                                st.session_state.new_session_entity_select_pending = [label]
+                        st.success("Entity created and attached.")
+                        st.rerun()
                     else:
                         st.error(resp.text)
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("Back"):
+            if st.button("Back", key="new_session_back_step2"):
                 st.session_state.new_session_step = 1
         with col2:
-            if st.button("Next", type="primary"):
+            if st.button("Next", type="primary", key="new_session_next_step2"):
                 st.session_state.new_session_step = 3
     elif step == 3:
         st.markdown("**Step 3: Create session**")
@@ -388,32 +443,27 @@ def _render_new_session_panel() -> None:
         }
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("Create session", type="primary"):
+            if st.button("Create session", type="primary", key="new_session_create_session"):
                 resp = _api_post("/sessions", st.session_state.user_id, payload)
                 if resp.status_code == 200:
                     data = resp.json()
-                    st.session_state.new_session["questions"] = data.get(
-                        "intake_questions", []
-                    )
-                    st.session_state.new_session_step = 4
-                    _set_active_session(data.get("session_id"))
+                    session_id = data.get("session_id")
+                    st.session_state.intake_queue = data.get("intake_questions", [])
+                    st.session_state.intake_answers = {}
+                    st.session_state.intake_transcript = []
+                    st.session_state.intake_session_id = session_id
+                    st.session_state.intake_summary = None
+                    _set_active_session(session_id)
+                    _reset_new_session()
                     st.success("Session created and opened.")
                 else:
                     st.error(resp.text)
         with col2:
-            if st.button("Back"):
+            if st.button("Back", key="new_session_back_step3"):
                 st.session_state.new_session_step = 2
     else:
-        st.markdown("**Intake questions**")
-        questions = st.session_state.new_session.get("questions", [])
-        if not questions:
-            st.info("No intake questions were generated.")
-        for idx, question in enumerate(questions):
-            answer = st.text_input(
-                f"Q{idx + 1}: {question}", key=f"intake_answer_{idx}"
-            )
-            st.session_state.new_session["answers"][question] = answer
-        if st.button("Back to start", type="primary"):
+        st.info("Intake questions now appear in the chat panel.")
+        if st.button("Back to start", type="primary", key="new_session_back_start"):
             _reset_new_session()
 
 
@@ -511,6 +561,51 @@ def _render_chat_panel() -> None:
         if st.session_state.session_recap:
             st.markdown(st.session_state.session_recap)
         return
+    intake_questions = []
+    if st.session_state.intake_session_id == session_id:
+        intake_questions = st.session_state.intake_queue
+    if intake_questions:
+        st.info("Answer intake questions to start the roleplay.")
+        answers = st.session_state.intake_answers
+        next_question = None
+        for question in intake_questions:
+            with st.chat_message("assistant"):
+                st.markdown(question)
+            answer = answers.get(question)
+            if answer:
+                with st.chat_message("user"):
+                    st.markdown(answer)
+            else:
+                next_question = question
+                break
+        if next_question:
+            response = st.chat_input("Answer intake question")
+            if response:
+                answers[next_question] = response
+                st.session_state.intake_answers = answers
+                st.session_state.intake_transcript.extend(
+                    [
+                        {"role": "assistant", "content": next_question},
+                        {"role": "user", "content": response},
+                    ]
+                )
+                if len(answers) >= len(intake_questions):
+                    st.session_state.intake_summary = _build_intake_summary(
+                        session_data.get("topic_text", ""),
+                        session_data.get("template_id"),
+                        intake_questions,
+                        answers,
+                    )
+                    st.session_state.intake_queue = []
+                st.rerun()
+        return
+    if (
+        st.session_state.intake_session_id == session_id
+        and st.session_state.intake_transcript
+    ):
+        for message in st.session_state.intake_transcript:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -522,6 +617,12 @@ def _render_chat_panel() -> None:
                     st.json(message["grounding_pack"])
     prompt = st.chat_input("Send a message")
     if prompt:
+        outbound = prompt
+        if st.session_state.intake_summary:
+            outbound = f"{st.session_state.intake_summary}\n\nUser message: {prompt}"
+            st.session_state.intake_summary = None
+            st.session_state.intake_session_id = None
+            st.session_state.intake_transcript = []
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -529,7 +630,7 @@ def _render_chat_panel() -> None:
             placeholder = st.empty()
             response_text, payload = _stream_roleplay_message(
                 session_id,
-                prompt,
+                outbound,
                 placeholder,
                 st.session_state.allow_web_grounding,
             )

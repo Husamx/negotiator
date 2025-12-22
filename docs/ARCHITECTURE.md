@@ -18,8 +18,8 @@ This doc describes a minimal architecture that satisfies `docs/REQUIREMENTS.md`.
 2) **Session Service** (messages, session metadata)
 3) **Template Service** (official templates, draft templates, proposals)
 4) **KG Service** (World graph CRUD)
-5) **Visibility Service** (priors + disclosure tracker + user overrides)
-6) **Web Grounding Service** (NeedSearch → query planning → Tavily → synthesis)
+5) **Visibility Service** (LLM selection using knowledge edges + disclosures)
+6) **Web Grounding Service** (LLM NeedSearch -> LLM query planning -> Tavily -> LLM synthesis)
 7) **LLM Orchestrator** (LangGraph state graph for roleplay + coaching; Instructor for extraction)
 8) **Events Service** (append-only log)
 9) **Observability** (Langfuse traces + prompt/version tracking)
@@ -30,26 +30,26 @@ Implementation may begin as a monolith, but keep internal module boundaries.
 ## 2. Orchestration as a state machine / graph
 
 ### 2.1 Session start flow
-1) TopicRouter → template_id (or `other`)
-2) EntityProposer (suggest entities/roles)
-3) QuestionPlanner (minimal questions; skip logic)
+1) TopicRouter (LLM) -> template_id (or `other`)
+2) EntityProposer (LLM) (suggest entities/roles)
+3) QuestionPlanner (LLM) (minimal questions; skip logic)
 4) SetupComplete → session starts
 
 ### 2.2 Per-turn flow
 Input: user message `m_t`
 
 1) Persist message
-2) Extract candidates (facts + entity updates; session-only)
+2) Extract candidates (facts + entity updates; session-only; LLM extraction)
 3) Disclosure update (counterparty learned facts in this session scope)
 4) Retrieve context:
    - attached entities only
    - 1–2 hop subgraph
    - template-filtered + recency-weighted
 5) Web grounding (optional):
-   - NeedSearch gate decides if web grounding is required
+   - LLM NeedSearch decides if web grounding is required
    - if yes, run Web Grounding Service and attach Grounding Pack
 6) Visibility filter:
-   - compute visible facts for counterparty (priors + disclosures + overrides)
+   - LLM selects visible facts using knowledge edges + disclosures
 7) LangGraph orchestrator builds prompt context (system + history + visible facts)
 8) Roleplay generation (counterparty message)
 9) Premium only:
@@ -57,6 +57,9 @@ Input: user message `m_t`
 10) Emit events for each step (including ORCHESTRATION_CONTEXT_BUILT with prompt messages)
 
 ### 2.2.1 LangGraph nodes (v0.1)
+LangGraph is mandatory for roleplay + coaching orchestration in all tiers.
+There is no non-graph fallback; if LangGraph is unavailable, the service should fail fast.
+
 - build_prompt: assemble system instructions + history + visible facts.
 - roleplay: call LiteLLM unless streaming (streaming builds prompt only).
 - coach: premium-only coaching output (separate channel).
@@ -83,10 +86,10 @@ For v0.1, web grounding is implemented as an in-repo module, not a separate serv
 Keep it behind a clean interface so it can be split later if needed.
 
 Core functions:
-- `need_search(context) -> decision`
-- `plan_queries(context, decision) -> queries`
+- `need_search(context) -> decision` (LLM) (LLM)
+- `plan_queries(context, decision) -> queries` (LLM) (LLM)
 - `tavily_search(queries, params) -> results`
-- `synthesize(results, context) -> grounding_pack`
+- `synthesize(results, context) -> grounding_pack` (LLM) (LLM)
 
 Caching:
 - query-level cache (normalized query + region) with TTL

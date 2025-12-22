@@ -2,50 +2,74 @@
 Template selection and management.
 
 Templates define the structure of negotiations. This module provides
-utilities for selecting the most appropriate template given a topic
-description and for returning the list of official templates defined in
-``docs/REQUIREMENTS.md``. A real implementation would use a classifier
-or LLM to map free‑text topics onto template IDs. For the MVP we use
-simple keyword matching.
+LLM-driven selection of the most appropriate template given a topic
+description and returns the list of official templates defined in
+``docs/REQUIREMENTS.md``.
 """
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional, Tuple
+import json
+from typing import List, Optional
 
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import get_settings
 from ..events import emit_event
 from ..models import EventType, TemplateDraft, TemplateProposal, TemplateProposalStatus
+from .llm_utils import acompletion_with_retry, extract_completion_text
 
 
-# Mapping of keywords to template identifiers
-_TOPIC_KEYWORDS: List[Tuple[str, str]] = [
-    ("roommate", "roommate_conflict"),
-    ("relationship", "relationship_disagreement"),
-    ("dating", "dating_expectations"),
-    ("friend", "friendship_conflict"),
-    ("money", "money_with_friends"),
-    ("family", "family_parental_disagreement"),
-    ("manager", "workplace_boundary"),
-    ("salary", "salary_offer"),
-    ("rent", "rent_renewal"),
-    ("refund", "refund_complaint"),
-]
+class TemplateSelection(BaseModel):
+    template_id: str = Field(..., description="Selected template identifier.")
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    rationale: Optional[str] = None
 
 
-def select_template(topic_text: str) -> str:
-    """Select a template ID based on a simple keyword heuristic.
+TEMPLATE_SELECTION_PROMPT = """You are the Template Router agent.
+Pick the best template_id for the user's topic from the provided list.
+If none fit, return template_id = "other".
+Output JSON only: {"template_id": "...", "confidence": 0.0-1.0, "rationale": "..."}.
+"""
 
-    :param topic_text: The user's free‑text description of their negotiation.
-    :return: A template identifier, or ``other`` if no match is found.
-    """
-    normalized = topic_text.lower()
-    for keyword, template in _TOPIC_KEYWORDS:
-        if keyword in normalized:
-            return template
-    return "other"
+
+async def select_template(topic_text: str) -> str:
+    """Select a template ID using an LLM classifier."""
+    settings = get_settings()
+    if not settings.litellm_model:
+        raise RuntimeError("LiteLLM model is not configured; cannot select template.")
+    templates = list_official_templates()
+    payload = {"topic_text": topic_text, "templates": templates}
+    completion_kwargs = {
+        "model": settings.litellm_model,
+        "messages": [
+            {"role": "system", "content": TEMPLATE_SELECTION_PROMPT},
+            {"role": "user", "content": json.dumps(payload)},
+        ],
+        "temperature": 0.0,
+    }
+    if settings.litellm_api_key:
+        completion_kwargs["api_key"] = settings.litellm_api_key
+    if settings.litellm_base_url:
+        completion_kwargs["base_url"] = settings.litellm_base_url
+    try:
+        from instructor import from_litellm
+
+        client = from_litellm(acompletion_with_retry)
+        response = await client(response_model=TemplateSelection, **completion_kwargs)
+        selection = response
+    except Exception:
+        response = await acompletion_with_retry(**completion_kwargs)
+        content = extract_completion_text(response)
+        if not content:
+            raise RuntimeError("LiteLLM returned an empty template selection.")
+        selection = TemplateSelection.model_validate_json(content)
+    valid_ids = {template["id"] for template in templates}
+    if selection.template_id not in valid_ids:
+        raise ValueError(f"Invalid template_id returned: {selection.template_id}")
+    return selection.template_id
 
 
 def list_official_templates() -> List[dict[str, str]]:

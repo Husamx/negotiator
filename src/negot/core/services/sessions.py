@@ -11,15 +11,17 @@ from __future__ import annotations
 import enum
 import json
 from datetime import datetime
-from typing import AsyncIterator, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import orjson
+from pydantic import BaseModel, Field
 
 from fastapi import HTTPException, status
-from sqlalchemy import desc, func, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from ..config import get_settings
 from ..events import emit_event
 from ..models import (
     Entity,
@@ -41,21 +43,28 @@ from ..schemas import (
     MemoryReviewRequest,
     MemoryReviewResponse,
     PostMessageRequest,
-    PostMessageResponse,
     SessionDetail,
     SessionSummary,
     SessionUpdateRequest,
 )
-from .kg import attach_entities_to_session, commit_facts, compute_visible_facts
+from .kg import attach_entities_to_session, commit_facts, compute_visible_facts, list_entities
 from .orchestrator import (
     extract_candidate_facts,
     generate_roleplay_stream,
     run_orchestration,
 )
+from .question_planner import generate_intake_questions
+from .entity_proposer import propose_entities
 from .templates import create_template_proposal_for_other, select_template
 from .web_grounding import need_search, plan_queries, run_search, synthesize
+from .llm_utils import acompletion_with_retry, extract_completion_text
 
 ROLEPLAY_HISTORY_LIMIT = 12
+
+
+class SessionRecapResult(BaseModel):
+    recap: str = Field(..., description="Descriptive recap of the session.")
+    after_action_report: Optional[str] = Field(None, description="Premium coaching summary.")
 
 
 async def create_session(
@@ -64,7 +73,7 @@ async def create_session(
     req: CreateSessionRequest,
 ) -> CreateSessionResponse:
     """Create a new negotiation session for a user."""
-    template_id = select_template(req.topic_text)
+    template_id = await select_template(req.topic_text)
     title = (req.topic_text or "Negotiation Session").strip()[:80]
     session = Session(
         user_id=user.id,
@@ -74,17 +83,17 @@ async def create_session(
         counterparty_style=req.counterparty_style,
     )
     db.add(session)
+    await db.flush()
     # Attach pre-existing entities if provided
+    attached_entities: List[Entity] = []
     if req.attached_entity_ids:
         # Fetch entities by ID and ownership
-        entities = []
         for eid in req.attached_entity_ids:
             entity = await db.get(Entity, eid)
             # Only attach if the entity exists and belongs to the user
             if entity and getattr(entity, "user_id", None) == user.id:
-                entities.append(entity)
-        await attach_entities_to_session(db, session, entities)
-    await db.flush()
+                attached_entities.append(entity)
+        await attach_entities_to_session(db, session, attached_entities)
     # Emit events
     await emit_event(db, EventType.session_created, user.id, session_id=session.id, payload={"template_id": template_id})
     await emit_event(
@@ -98,27 +107,39 @@ async def create_session(
         await emit_event(db, EventType.template_other_triggered, user.id, session_id=session.id, payload={"topic": req.topic_text})
         await create_template_proposal_for_other(db, user.id, session.id, req.topic_text)
     # Build minimal intake questions based on template
-    intake_questions = _generate_intake_questions(template_id)
-    proposed_entities: List = []  # Could implement suggestion heuristics here
+    attached_entities_state = [
+        {"id": entity.id, "name": entity.name, "type": entity.type}
+        for entity in attached_entities
+    ]
+    intake_questions = await generate_intake_questions(
+        topic_text=req.topic_text,
+        template_id=template_id,
+        counterparty_style=req.counterparty_style,
+        attached_entities=attached_entities_state,
+        history=[],
+    )
+    all_entities = await list_entities(db, user.id)
+    entity_payloads = [
+        {
+            "id": entity.id,
+            "name": entity.name,
+            "type": entity.type,
+            "attributes": entity.attributes,
+        }
+        for entity in all_entities
+    ]
+    proposed_entity_ids = await propose_entities(
+        topic_text=req.topic_text,
+        entities=entity_payloads,
+        attached_entity_ids=req.attached_entity_ids or [],
+    )
+    proposed_entities = [entity for entity in all_entities if entity.id in proposed_entity_ids]
     return CreateSessionResponse(
         session_id=session.id,
         template_id=template_id,
         proposed_entities=proposed_entities,
         intake_questions=intake_questions,
     )
-
-
-def _generate_intake_questions(template_id: str) -> List[str]:
-    """Generate minimal intake questions for a given template.
-
-    The MVP uses hard‑coded questions. A sophisticated implementation
-    would consult the template definition and ask only what is unknown.
-    """
-    base_questions = [
-        "Who are you negotiating with?",
-        "What is the outcome you hope to achieve?",
-    ]
-    return base_questions
 
 
 async def _get_session_or_404(db: AsyncSession, session_id: int, user_id: int) -> Session:
@@ -182,6 +203,16 @@ def _sse_json(event: str, payload: object) -> str:
     return _sse_event(event, _json_dumps(payload))
 
 
+def _empty_grounding_pack() -> Dict[str, Any]:
+    return {
+        "key_points": [],
+        "norms_and_expectations": [],
+        "constraints_and_rules": [],
+        "disputed_or_uncertain": [],
+        "what_to_ask_user": [],
+    }
+
+
 async def _can_run_search(
     db: AsyncSession, user: User, session_id: int, trigger: Optional[str]
 ) -> bool:
@@ -200,6 +231,97 @@ async def _can_run_search(
     if trigger != "user_requested" and search_count >= 1:
         return False
     return True
+
+
+async def _run_grounding_pipeline(
+    *,
+    db: AsyncSession,
+    user: User,
+    session: Session,
+    topic_text: str,
+    template_id: str,
+    enable_web_grounding: bool,
+    trigger: Optional[str],
+    force_user_request: bool,
+    max_queries: Optional[int],
+    emit_decision_before_search: bool,
+    emit_shown_to_user: bool,
+    add_budget_reason: bool,
+    return_empty_pack_when_skipped: bool,
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], int]:
+    if not enable_web_grounding:
+        if return_empty_pack_when_skipped:
+            return _empty_grounding_pack(), [], 0
+        return None, [], 0
+    decision = await need_search({"topic_text": topic_text, "template_id": template_id})
+    if force_user_request:
+        decision["need_search"] = True
+        decision.setdefault("reason_codes", []).append("USER_REQUESTED")
+    if not decision.get("need_search"):
+        if return_empty_pack_when_skipped:
+            return _empty_grounding_pack(), [], 0
+        return None, [], 0
+    if emit_decision_before_search:
+        await emit_event(
+            db,
+            EventType.web_grounding_decided,
+            user.id,
+            session_id=session.id,
+            payload=decision,
+        )
+    if not await _can_run_search(db, user, session.id, trigger):
+        if add_budget_reason:
+            decision["need_search"] = False
+            decision["reason_codes"] = decision.get("reason_codes", []) + ["BUDGET_EXCEEDED"]
+        if return_empty_pack_when_skipped:
+            return _empty_grounding_pack(), [], 0
+        return None, [], 0
+    queries = (await plan_queries({"topic_text": topic_text}, decision)).get("queries", [])
+    decision_max = decision.get("max_queries")
+    if isinstance(decision_max, int):
+        queries = queries[:decision_max]
+    if max_queries is not None:
+        queries = queries[:max_queries]
+    await emit_event(
+        db,
+        EventType.web_grounding_query_planned,
+        user.id,
+        session_id=session.id,
+        payload={"queries": queries},
+    )
+    results = await run_search(queries)
+    await emit_event(
+        db,
+        EventType.web_grounding_called,
+        user.id,
+        session_id=session.id,
+        payload={"num_queries": len(queries)},
+    )
+    grounding_pack = await synthesize(results, {})
+    if not emit_decision_before_search:
+        await emit_event(
+            db,
+            EventType.web_grounding_decided,
+            user.id,
+            session_id=session.id,
+            payload=decision,
+        )
+    await emit_event(
+        db,
+        EventType.web_grounding_pack_created,
+        user.id,
+        session_id=session.id,
+        payload={"num_sources": len(results)},
+    )
+    if emit_shown_to_user:
+        await emit_event(
+            db,
+            EventType.web_grounding_shown_to_user,
+            user.id,
+            session_id=session.id,
+            payload={"num_sources": len(results)},
+        )
+    return grounding_pack, results, len(queries)
 
 
 async def list_sessions(db: AsyncSession, user: User) -> List[SessionSummary]:
@@ -227,7 +349,13 @@ async def get_session_detail(db: AsyncSession, user: User, session_id: int) -> S
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    return SessionDetail.model_validate(session)
+    detail = SessionDetail.model_validate(session)
+    if detail.attached_entities:
+        unique = {}
+        for ent in detail.attached_entities:
+            unique[ent.id] = ent
+        detail.attached_entities = list(unique.values())
+    return detail
 
 
 async def update_session(
@@ -266,9 +394,12 @@ async def detach_entities(db: AsyncSession, user: User, session_id: int, entity_
     session = await _get_session_or_404(db, session_id, user.id)
     if not entity_ids:
         return
-    for entity in list(session.attached_entities):
-        if entity.id in entity_ids:
-            session.attached_entities.remove(entity)
+    await db.execute(
+        delete(SessionEntity).where(
+            SessionEntity.session_id == session.id,
+            SessionEntity.entity_id.in_(entity_ids),
+        )
+    )
     await db.flush()
     await emit_event(
         db,
@@ -276,160 +407,6 @@ async def detach_entities(db: AsyncSession, user: User, session_id: int, entity_
         user.id,
         session_id=session.id,
         payload={"entity_ids": entity_ids},
-    )
-
-
-async def post_message(
-    db: AsyncSession,
-    user: User,
-    session_id: int,
-    req: PostMessageRequest,
-) -> PostMessageResponse:
-    """Handle a user or coach message in an existing session."""
-    session = await _get_session_or_404(db, session_id, user.id)
-    if session.ended_at is not None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Session has ended")
-    # Save user or coach message
-    role = MessageRole.user if req.channel == "roleplay" else MessageRole.coach
-    user_message = Message(
-        session_id=session.id,
-        role=role,
-        content=req.content,
-    )
-    db.add(user_message)
-    await db.flush()
-    history: List[dict] = []
-    if req.channel == "roleplay":
-        history = await _fetch_recent_roleplay_history(
-            db, session.id, exclude_message_id=user_message.id
-        )
-    # Emit message event
-    await emit_event(db, EventType.message_user_sent if role == MessageRole.user else EventType.message_coach_sent, user.id, session_id=session.id, payload={"content": req.content})
-    # Extract candidate facts from user message
-    entity_ids = await _fetch_attached_entity_ids(db, session.id)
-    candidate_facts = await extract_candidate_facts(req.content, entity_ids)
-    # Persist candidate facts as session-only facts so they can be reviewed later
-    extracted_fact_models = []
-    for cand in candidate_facts:
-        fact = Fact(
-            user_id=user.id,
-            session_id=session.id,
-            subject_entity_id=cand.get("subject_entity_id"),
-            key=cand.get("key"),
-            value=cand.get("value"),
-            scope=KnowledgeScope.session_scope,
-            confidence=1.0,
-            source_type="model_extracted",
-            source_ref=f"message:{user_message.id}",
-        )
-        db.add(fact)
-        await db.flush()
-        extracted_fact_models.append(fact)
-    # Determine if web search is needed
-    decision = need_search({"topic_text": req.content, "template_id": session.template_id})
-    grounding_pack = None
-    if req.enable_web_grounding and decision.get("need_search"):
-        if not await _can_run_search(db, user, session.id, req.web_grounding_trigger):
-            decision["need_search"] = False
-            decision["reason_codes"] = decision.get("reason_codes", []) + ["BUDGET_EXCEEDED"]
-        else:
-            queries = plan_queries({"topic_text": req.content}, decision).get("queries", [])
-            await emit_event(
-                db,
-                EventType.web_grounding_query_planned,
-                user.id,
-                session_id=session.id,
-                payload={"queries": queries},
-            )
-            results = await run_search(queries)
-            await emit_event(
-                db,
-                EventType.web_grounding_called,
-                user.id,
-                session_id=session.id,
-                payload={"num_queries": len(queries)},
-            )
-            grounding_pack = synthesize(results, {})
-            # Emit grounding events
-            await emit_event(db, EventType.web_grounding_decided, user.id, session_id=session.id, payload=decision)
-            await emit_event(db, EventType.web_grounding_pack_created, user.id, session_id=session.id, payload={"num_sources": len(results)})
-    # Compute visible facts for the counterparty
-    visible_facts = await compute_visible_facts(db, session)
-    await emit_event(
-        db,
-        EventType.disclosure_in_chat,
-        user.id,
-        session_id=session.id,
-        payload={
-            "template_id": session.template_id,
-            "counterparty_style": session.counterparty_style,
-            "entity_ids": entity_ids,
-            "visible_facts": [
-                {"id": fact.get("id"), "key": fact.get("key"), "value": fact.get("value")}
-                for fact in visible_facts
-            ],
-            "grounding_used": bool(grounding_pack),
-        },
-    )
-    # Generate roleplay response if channel is roleplay
-    counterparty_message = None
-    coach_panel = None
-    if req.channel == "roleplay":
-        orchestration = await run_orchestration(
-            req.content,
-            visible_facts,
-            grounding_pack,
-            session.counterparty_style,
-            history,
-            include_coach=user.tier == UserTier.premium,
-            stream_roleplay=False,
-        )
-        prompt_messages = orchestration.get("prompt_messages") or []
-        counterparty_message = orchestration.get("roleplay_response")
-        coach_panel = orchestration.get("coach_panel")
-        await emit_event(
-            db,
-            EventType.orchestration_context_built,
-            user.id,
-            session_id=session.id,
-            payload={
-                "messages": prompt_messages,
-                "template_id": session.template_id,
-                "history_count": len(history),
-                "history_limit": ROLEPLAY_HISTORY_LIMIT,
-            },
-        )
-        # Save counterparty message
-        reply = Message(
-            session_id=session.id,
-            role=MessageRole.counterparty,
-            content=counterparty_message,
-        )
-        db.add(reply)
-        await emit_event(
-            db,
-            EventType.message_counterparty_sent,
-            user.id,
-            session_id=session.id,
-            payload={"content": counterparty_message},
-        )
-    # Build extracted facts list for response
-    extracted_facts = [
-        {
-            "id": f.id,
-            "subject_entity_id": f.subject_entity_id,
-            "key": f.key,
-            "value": f.value,
-            "scope": f.scope,
-            "source_ref": f.source_ref,
-        }
-        for f in extracted_fact_models
-    ]
-    return PostMessageResponse(
-        counterparty_message=counterparty_message,
-        coach_panel=coach_panel,
-        grounding_pack=grounding_pack,
-        extracted_facts=extracted_facts,
     )
 
 
@@ -483,38 +460,24 @@ async def stream_message(
             db.add(fact)
             await db.flush()
             extracted_fact_models.append(fact)
-        decision = need_search({"topic_text": req.content, "template_id": session.template_id})
-        grounding_pack = None
-        if req.enable_web_grounding and decision.get("need_search"):
-            if not await _can_run_search(db, user, session.id, req.web_grounding_trigger):
-                decision["need_search"] = False
-                decision["reason_codes"] = decision.get("reason_codes", []) + ["BUDGET_EXCEEDED"]
-            else:
-                queries = plan_queries({"topic_text": req.content}, decision).get("queries", [])
-                await emit_event(
-                    db,
-                    EventType.web_grounding_query_planned,
-                    user.id,
-                    session_id=session.id,
-                    payload={"queries": queries},
-                )
-                results = await run_search(queries)
-                await emit_event(
-                    db,
-                    EventType.web_grounding_called,
-                    user.id,
-                    session_id=session.id,
-                    payload={"num_queries": len(queries)},
-                )
-                grounding_pack = synthesize(results, {})
-                await emit_event(db, EventType.web_grounding_decided, user.id, session_id=session.id, payload=decision)
-                await emit_event(
-                    db,
-                    EventType.web_grounding_pack_created,
-                    user.id,
-                    session_id=session.id,
-                    payload={"num_sources": len(results)},
-                )
+        grounding_topic = " ".join(
+            part for part in [session.topic_text or "", req.content or ""] if part
+        )
+        grounding_pack, _grounding_sources, _grounding_budget = await _run_grounding_pipeline(
+            db=db,
+            user=user,
+            session=session,
+            topic_text=grounding_topic,
+            template_id=session.template_id,
+            enable_web_grounding=bool(req.enable_web_grounding),
+            trigger=req.web_grounding_trigger,
+            force_user_request=False,
+            max_queries=None,
+            emit_decision_before_search=False,
+            emit_shown_to_user=False,
+            add_budget_reason=True,
+            return_empty_pack_when_skipped=False,
+        )
         visible_facts = await compute_visible_facts(db, session)
         await emit_event(
             db,
@@ -541,6 +504,8 @@ async def stream_message(
                 grounding_pack,
                 session.counterparty_style,
                 history,
+                session.topic_text,
+                session.template_id,
                 include_coach=user.tier == UserTier.premium,
                 stream_roleplay=True,
             )
@@ -554,6 +519,7 @@ async def stream_message(
                 payload={
                     "messages": prompt_messages,
                     "template_id": session.template_id,
+                    "topic_text": session.topic_text,
                     "history_count": len(history),
                     "history_limit": ROLEPLAY_HISTORY_LIMIT,
                 },
@@ -566,7 +532,12 @@ async def stream_message(
                 payload={"channel": req.channel},
             )
             async for token in generate_roleplay_stream(
-                req.content, visible_facts, grounding_pack, session.counterparty_style, history
+                req.content,
+                visible_facts,
+                grounding_pack,
+                session.counterparty_style,
+                history,
+                prompt_messages=prompt_messages,
             ):
                 if token:
                     counterparty_chunks.append(token)
@@ -626,28 +597,54 @@ async def end_session(db: AsyncSession, user: User, session_id: int) -> EndSessi
     if session.ended_at is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Session already ended")
     session.ended_at = datetime.utcnow()
-    # Generate recap: summarise user and counterparty messages
-    user_count = await db.scalar(
-        select(func.count()).where(
-            Message.session_id == session_id,
-            Message.role == MessageRole.user,
-        )
+    result = await db.execute(
+        select(Message).where(Message.session_id == session_id).order_by(Message.created_at)
     )
-    counter_count = await db.scalar(
-        select(func.count()).where(
-            Message.session_id == session_id,
-            Message.role == MessageRole.counterparty,
-        )
+    messages = result.scalars().all()
+    payload = {
+        "topic_text": session.topic_text,
+        "template_id": session.template_id,
+        "messages": [
+            {"role": msg.role.value if hasattr(msg.role, "value") else str(msg.role), "content": msg.content}
+            for msg in messages
+        ],
+        "premium": user.tier == UserTier.premium,
+    }
+    system_prompt = (
+        "You are the Session Recap agent. Produce a concise descriptive recap of the session. "
+        "If premium=true, also produce an after_action_report with coaching insights. "
+        "If premium=false, do not include advice or coaching language. "
+        'Output JSON only: {"recap":"...","after_action_report":"..."}'
     )
-    user_count = int(user_count or 0)
-    counter_count = int(counter_count or 0)
-    recap = f"You exchanged {user_count} messages with the counterparty, who replied {counter_count} times."
-    after_action_report = None
-    if user.tier == UserTier.premium:
-        # Provide a basic after‑action report for premium users
-        after_action_report = (
-            "Reflect on whether you achieved your desired outcome and what you might try differently next time."
-        )
+    settings = get_settings()
+    if not settings.litellm_model:
+        raise RuntimeError("LiteLLM model is not configured; cannot generate session recap.")
+    completion_kwargs = {
+        "model": settings.litellm_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(payload)},
+        ],
+        "temperature": 0.2,
+    }
+    if settings.litellm_api_key:
+        completion_kwargs["api_key"] = settings.litellm_api_key
+    if settings.litellm_base_url:
+        completion_kwargs["base_url"] = settings.litellm_base_url
+    try:
+        from instructor import from_litellm
+
+        client = from_litellm(acompletion_with_retry)
+        response = await client(response_model=SessionRecapResult, **completion_kwargs)
+        recap_result = response
+    except Exception:
+        response = await acompletion_with_retry(**completion_kwargs)
+        content = extract_completion_text(response)
+        if not content:
+            raise RuntimeError("LiteLLM returned an empty session recap.")
+        recap_result = SessionRecapResult.model_validate_json(content)
+    recap = recap_result.recap
+    after_action_report = recap_result.after_action_report if user.tier == UserTier.premium else None
     await emit_event(db, EventType.session_ended, user.id, session_id=session.id, payload={})
     return EndSessionResponse(recap=recap, after_action_report=after_action_report)
 
@@ -719,53 +716,19 @@ async def explicit_grounding(
     """Run explicit grounding for the session."""
     session = await _get_session_or_404(db, session_id, user.id)
     topic = req.user_question or session.topic_text or ""
-    decision = need_search({"topic_text": topic, "template_id": session.template_id})
-    if req.mode == "user_requested":
-        decision["need_search"] = True
-        decision.setdefault("reason_codes", []).append("USER_REQUESTED")
-    if not decision.get("need_search"):
-        return {"key_points": [], "norms_and_expectations": [], "constraints_and_rules": [], "disputed_or_uncertain": [], "what_to_ask_user": []}, [], 0
-    await emit_event(
-        db,
-        EventType.web_grounding_decided,
-        user.id,
-        session_id=session.id,
-        payload=decision,
+    grounding_pack, sources, budget = await _run_grounding_pipeline(
+        db=db,
+        user=user,
+        session=session,
+        topic_text=topic,
+        template_id=session.template_id,
+        enable_web_grounding=True,
+        trigger="user_requested",
+        force_user_request=req.mode == "user_requested",
+        max_queries=req.max_queries,
+        emit_decision_before_search=True,
+        emit_shown_to_user=True,
+        add_budget_reason=False,
+        return_empty_pack_when_skipped=True,
     )
-    if not await _can_run_search(db, user, session.id, "user_requested"):
-        return {"key_points": [], "norms_and_expectations": [], "constraints_and_rules": [], "disputed_or_uncertain": [], "what_to_ask_user": []}, [], 0
-    queries = plan_queries({"topic_text": topic}, decision).get("queries", [])
-    if req.max_queries is not None:
-        queries = queries[: req.max_queries]
-    await emit_event(
-        db,
-        EventType.web_grounding_query_planned,
-        user.id,
-        session_id=session.id,
-        payload={"queries": queries},
-    )
-    results = await run_search(queries)
-    await emit_event(
-        db,
-        EventType.web_grounding_called,
-        user.id,
-        session_id=session.id,
-        payload={"num_queries": len(queries)},
-    )
-    grounding_pack = synthesize(results, {})
-    await emit_event(
-        db,
-        EventType.web_grounding_pack_created,
-        user.id,
-        session_id=session.id,
-        payload={"num_sources": len(results)},
-    )
-    await emit_event(
-        db,
-        EventType.web_grounding_shown_to_user,
-        user.id,
-        session_id=session.id,
-        payload={"num_sources": len(results)},
-    )
-    return grounding_pack, results, len(queries)
-
+    return grounding_pack, sources, budget

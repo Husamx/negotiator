@@ -4,21 +4,21 @@ LLM orchestration and chat loop logic.
 This module wires a LangGraph state machine to build prompt context,
 invoke LiteLLM for roleplay, and optionally generate coaching output.
 Instructor is used for structured fact extraction when configured.
-Fallback responses keep the MVP functional without external LLMs.
 """
 from __future__ import annotations
 
 import json
 import logging
-import random
-import re
 from typing import Any, Dict, List, Optional, TypedDict
 
-from litellm import acompletion
 from pydantic import BaseModel, Field
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from ..config import get_settings
+from .llm_utils import (
+    acompletion_with_retry,
+    extract_completion_text,
+    extract_json_object,
+)
 
 try:
     from langgraph.graph import END, StateGraph
@@ -28,8 +28,6 @@ except Exception:  # noqa: BLE001
 
 
 logger = logging.getLogger(__name__)
-
-LLM_RETRY_ATTEMPTS = 3
 
 
 class ExtractedFact(BaseModel):
@@ -53,11 +51,40 @@ class OrchestrationState(TypedDict, total=False):
     grounding_pack: Optional[Dict[str, Any]]
     style: Optional[str]
     history: List[Dict[str, str]]
+    topic_text: Optional[str]
+    template_id: Optional[str]
     include_coach: bool
     stream_roleplay: bool
     prompt_messages: List[Dict[str, str]]
     roleplay_response: Optional[str]
     coach_panel: Optional[Dict[str, Any]]
+
+
+class CoachSuggestion(BaseModel):
+    reply: str = Field(..., description="Suggestion label (A/B/C).")
+    text: str = Field(..., description="Suggested reply text.")
+    intent: str = Field(..., description="Intent label for the suggestion.")
+
+
+class CoachPanel(BaseModel):
+    suggestions: List[CoachSuggestion] = Field(default_factory=list)
+    strategy: Dict[str, str] = Field(default_factory=dict)
+    critique: str = Field("")
+    scenario_branches: List[Dict[str, str]] = Field(default_factory=list)
+    after_action_report: str = Field("")
+
+
+COACH_SYSTEM_PROMPT = """You are the Premium Coaching agent.
+Provide coaching in a separate channel. Follow these rules:
+- Avoid manipulation, coercion, or deception.
+- Use only the provided context; unknown stays unknown.
+- Output JSON only that matches the schema:
+{"suggestions":[{"reply":"A","text":"...","intent":"..."}],
+ "strategy":{"anchoring":"...","concessions":"...","questions":"...","red_lines":"..."},
+ "critique":"...",
+ "scenario_branches":[{"label":"...","next_step":"..."}],
+ "after_action_report":"..."}
+"""
 
 
 _LANGFUSE_CLIENT: Optional[Any] = None
@@ -111,24 +138,12 @@ def _log_langfuse_generation(
         logger.debug("Langfuse logging failed: %s", exc)
 
 
-@retry(
-    stop=stop_after_attempt(LLM_RETRY_ATTEMPTS),
-    wait=wait_exponential(min=1, max=8),
-    retry=retry_if_exception_type(Exception),
-    reraise=True,
-)
-async def _acompletion_with_retry(**kwargs: Any) -> Any:
-    return await acompletion(**kwargs)
-
-
 async def extract_candidate_facts(message: str, subject_entity_ids: List[int]) -> List[Dict[str, Any]]:
     """Extract candidate facts from a user message.
 
     A real implementation would call a structured extraction model
     (e.g., via the `instructor` library) to identify facts, their
-    subjects and values. The MVP provides a trivial extractor that
-    returns an empty list. You could extend this with simple regex
-    rules (e.g., detect numbers) if desired.
+    subjects and values.
 
     :param message: The raw user message.
     :param subject_entity_ids: IDs of entities attached to the session.
@@ -137,46 +152,51 @@ async def extract_candidate_facts(message: str, subject_entity_ids: List[int]) -
     if not subject_entity_ids:
         return []
     settings = get_settings()
-    if settings.env != "test" and settings.litellm_model:
-        try:
-            from instructor import from_litellm
+    if not settings.litellm_model:
+        raise RuntimeError("LiteLLM model is not configured; cannot extract facts.")
+    system_prompt = (
+        "Extract atomic facts from the user message. "
+        "Only use subject_entity_id values from the provided list. "
+        "Return an empty list when no facts are present. "
+        'Output JSON only: {"facts":[{"subject_entity_id":1,"key":"...","value":"...","confidence":0.6}]}'
+    )
+    user_payload = {
+        "message": message,
+        "subject_entity_ids": subject_entity_ids,
+    }
+    completion_kwargs = {
+        "model": settings.litellm_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(user_payload, default=str)},
+        ],
+        "temperature": 0.0,
+    }
+    if settings.litellm_api_key:
+        completion_kwargs["api_key"] = settings.litellm_api_key
+    if settings.litellm_base_url:
+        completion_kwargs["base_url"] = settings.litellm_base_url
+    try:
+        from instructor import from_litellm
 
-            client = from_litellm(_acompletion_with_retry)
-            system_prompt = (
-                "Extract atomic facts from the user message. "
-                "Only use subject_entity_id values from the provided list. "
-                "Return an empty list when no facts are present."
-            )
-            user_payload = {
-                "message": message,
-                "subject_entity_ids": subject_entity_ids,
-            }
-            response = await client(
-                model=settings.litellm_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": json.dumps(user_payload)},
-                ],
-                temperature=0.0,
-                response_model=FactExtractionResult,
-            )
-            return [fact.model_dump() for fact in response.facts]
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Instructor extraction failed; falling back. Error: %s", exc)
-    match = re.search(r"\b(\d{2,3}(?:[,\d]{0,6})?)\b", message)
-    if not match:
+        client = from_litellm(acompletion_with_retry)
+        response = await client(response_model=FactExtractionResult, **completion_kwargs)
+        return [fact.model_dump() for fact in response.facts]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Instructor extraction failed. Error: %s", exc)
+    response = await acompletion_with_retry(**completion_kwargs)
+    content = extract_completion_text(response)
+    if not content:
         return []
-    raw_value = match.group(1).replace(",", "")
-    key = "mentioned_amount"
-    if "salary" in message.lower():
-        key = "salary_offer"
-    return [
-        {
-            "subject_entity_id": subject_entity_ids[0],
-            "key": key,
-            "value": raw_value,
-        }
-    ]
+    try:
+        parsed = FactExtractionResult.model_validate_json(content)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to parse fact extraction output. Error: %s", exc)
+        extracted = extract_json_object(content)
+        if extracted is None:
+            return []
+        parsed = FactExtractionResult.model_validate(extracted)
+    return [fact.model_dump() for fact in parsed.facts]
 
 
 async def _generate_roleplay_from_prompt(
@@ -187,31 +207,33 @@ async def _generate_roleplay_from_prompt(
     style: Optional[str],
 ) -> str:
     settings = get_settings()
-    if settings.env != "test" and settings.litellm_model:
-        try:
-            completion_kwargs = {
-                "model": settings.litellm_model,
-                "messages": messages,
-                "temperature": 0.7,
-            }
-            if settings.litellm_api_key:
-                completion_kwargs["api_key"] = settings.litellm_api_key
-            if settings.litellm_base_url:
-                completion_kwargs["base_url"] = settings.litellm_base_url
-            response = await _acompletion_with_retry(**completion_kwargs)
-            content = _extract_completion_text(response)
-            if content:
-                _log_langfuse_generation(
-                    name="roleplay_response",
-                    model=settings.litellm_model,
-                    messages=messages,
-                    output=content.strip(),
-                    metadata={"style": style},
-                )
-                return content.strip()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("LLM roleplay response failed; falling back. Error: %s", exc)
-    return _fallback_roleplay_response(user_message, visible_facts, grounding_pack, style)
+    if not settings.litellm_model:
+        raise RuntimeError("LiteLLM model is not configured; cannot generate roleplay.")
+    try:
+        completion_kwargs = {
+            "model": settings.litellm_model,
+            "messages": messages,
+            "temperature": 0.7,
+        }
+        if settings.litellm_api_key:
+            completion_kwargs["api_key"] = settings.litellm_api_key
+        if settings.litellm_base_url:
+            completion_kwargs["base_url"] = settings.litellm_base_url
+        response = await acompletion_with_retry(**completion_kwargs)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("LLM roleplay response failed. Error: %s", exc)
+        raise
+    content = extract_completion_text(response)
+    if not content:
+        raise RuntimeError("LiteLLM returned an empty roleplay response.")
+    _log_langfuse_generation(
+        name="roleplay_response",
+        model=settings.litellm_model,
+        messages=messages,
+        output=content.strip(),
+        metadata={"style": style},
+    )
+    return content.strip()
 
 
 async def generate_roleplay_response(
@@ -246,55 +268,45 @@ async def generate_roleplay_stream(
     grounding_pack: Optional[Dict[str, Any]],
     style: Optional[str],
     history: Optional[List[Dict[str, str]]] = None,
+    prompt_messages: Optional[List[Dict[str, str]]] = None,
 ):
     """Stream a simulated counterparty response."""
     settings = get_settings()
-    if settings.env != "test" and settings.litellm_model:
-        messages = build_roleplay_messages(user_message, visible_facts, grounding_pack, style, history)
-        try:
-            completion_kwargs = {
-                "model": settings.litellm_model,
-                "messages": messages,
-                "temperature": 0.7,
-                "stream": True,
-            }
-            if settings.litellm_api_key:
-                completion_kwargs["api_key"] = settings.litellm_api_key
-            if settings.litellm_base_url:
-                completion_kwargs["base_url"] = settings.litellm_base_url
-            stream = await _acompletion_with_retry(**completion_kwargs)
-            collected: List[str] = []
-            async for chunk in stream:
-                delta = _extract_stream_delta(chunk)
-                if delta:
-                    collected.append(delta)
-                    yield delta
-            if collected:
-                _log_langfuse_generation(
-                    name="roleplay_stream",
-                    model=settings.litellm_model,
-                    messages=messages,
-                    output="".join(collected).strip(),
-                    metadata={"style": style},
-                )
-            return
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("LLM roleplay streaming failed; falling back. Error: %s", exc)
-    fallback = _fallback_roleplay_response(user_message, visible_facts, grounding_pack, style)
-    for piece in _iter_text_chunks(fallback):
-        yield piece
-
-
-def _extract_completion_text(response: Any) -> Optional[str]:
-    """Extract the text content from a LiteLLM completion response."""
+    if not settings.litellm_model:
+        raise RuntimeError("LiteLLM model is not configured; cannot stream roleplay.")
+    messages = prompt_messages or build_roleplay_messages(
+        user_message, visible_facts, grounding_pack, style, history
+    )
     try:
-        return response["choices"][0]["message"]["content"]
-    except Exception:
-        pass
-    try:
-        return response.choices[0].message.content
-    except Exception:
-        return None
+        completion_kwargs = {
+            "model": settings.litellm_model,
+            "messages": messages,
+            "temperature": 0.7,
+            "stream": True,
+        }
+        if settings.litellm_api_key:
+            completion_kwargs["api_key"] = settings.litellm_api_key
+        if settings.litellm_base_url:
+            completion_kwargs["base_url"] = settings.litellm_base_url
+        stream = await acompletion_with_retry(**completion_kwargs)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("LLM roleplay streaming failed. Error: %s", exc)
+        raise
+    collected: List[str] = []
+    async for chunk in stream:
+        delta = _extract_stream_delta(chunk)
+        if delta:
+            collected.append(delta)
+            yield delta
+    if not collected:
+        raise RuntimeError("LiteLLM streaming returned no content.")
+    _log_langfuse_generation(
+        name="roleplay_stream",
+        model=settings.litellm_model,
+        messages=messages,
+        output="".join(collected).strip(),
+        metadata={"style": style},
+    )
 
 
 def build_roleplay_messages(
@@ -303,6 +315,8 @@ def build_roleplay_messages(
     grounding_pack: Optional[Dict[str, Any]],
     style: Optional[str],
     history: Optional[List[Dict[str, str]]] = None,
+    topic_text: Optional[str] = None,
+    template_id: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     system_lines = [
         "You are the counterparty in a negotiation roleplay.",
@@ -311,6 +325,10 @@ def build_roleplay_messages(
         "Keep responses concise (2-4 sentences).",
         "Use only the provided context; ask a brief clarifying question if unsure.",
     ]
+    if topic_text:
+        system_lines.append(f"Session topic: {topic_text}")
+    if template_id:
+        system_lines.append(f"Template: {template_id}")
     if style:
         system_lines.append(f"Counterparty style: {style}.")
     if visible_facts:
@@ -343,6 +361,8 @@ def _build_prompt_node(state: OrchestrationState) -> Dict[str, Any]:
         state.get("grounding_pack"),
         state.get("style"),
         state.get("history"),
+        state.get("topic_text"),
+        state.get("template_id"),
     )
     return {"prompt_messages": messages}
 
@@ -358,6 +378,8 @@ async def _roleplay_node(state: OrchestrationState) -> Dict[str, Any]:
             state.get("grounding_pack"),
             state.get("style"),
             state.get("history"),
+            state.get("topic_text"),
+            state.get("template_id"),
         )
     response = await _generate_roleplay_from_prompt(
         messages,
@@ -385,8 +407,7 @@ def _get_orchestration_graph():
     if _ORCHESTRATION_GRAPH is not None:
         return _ORCHESTRATION_GRAPH
     if StateGraph is None or END is None:
-        logger.warning("LangGraph is not available; using fallback orchestration.")
-        return None
+        raise RuntimeError("LangGraph is required for orchestration but is not available.")
     graph = StateGraph(OrchestrationState)
     graph.add_node("build_prompt", _build_prompt_node)
     graph.add_node("roleplay", _roleplay_node)
@@ -412,8 +433,10 @@ async def run_orchestration(
     grounding_pack: Optional[Dict[str, Any]],
     style: Optional[str],
     history: Optional[List[Dict[str, str]]],
-    include_coach: bool,
-    stream_roleplay: bool,
+    topic_text: Optional[str] = None,
+    template_id: Optional[str] = None,
+    include_coach: bool = False,
+    stream_roleplay: bool = True,
 ) -> OrchestrationState:
     state: OrchestrationState = {
         "user_message": user_message,
@@ -421,87 +444,13 @@ async def run_orchestration(
         "grounding_pack": grounding_pack,
         "style": style,
         "history": history or [],
+        "topic_text": topic_text,
+        "template_id": template_id,
         "include_coach": include_coach,
         "stream_roleplay": stream_roleplay,
     }
     graph = _get_orchestration_graph()
-    if graph is None:
-        prompt_messages = build_roleplay_messages(
-            user_message,
-            visible_facts,
-            grounding_pack,
-            style,
-            history,
-        )
-        roleplay_response = None
-        if not stream_roleplay:
-            roleplay_response = await _generate_roleplay_from_prompt(
-                prompt_messages,
-                user_message,
-                visible_facts,
-                grounding_pack,
-                style,
-            )
-        coach_panel = None
-        if include_coach:
-            coach_panel = await generate_coach_response(
-                user_message, visible_facts, grounding_pack
-            )
-        state.update(
-            {
-                "prompt_messages": prompt_messages,
-                "roleplay_response": roleplay_response,
-                "coach_panel": coach_panel,
-            }
-        )
-        return state
     return await graph.ainvoke(state)
-
-
-def _fallback_roleplay_response(
-    user_message: str,
-    visible_facts: List[Dict[str, Any]],
-    grounding_pack: Optional[Dict[str, Any]],
-    style: Optional[str],
-) -> str:
-    style_prefix = ""
-    if style:
-        style_map = {
-            "polite": "I'm trying to be polite: ",
-            "neutral": "",
-            "tough": "Listen, ",
-            "busy": "I'm busy, but ",
-            "defensive": "I feel defensive, so ",
-        }
-        style_prefix = style_map.get(style.lower(), "")
-    fact_note = ""
-    if visible_facts:
-        # pick a random fact to mention
-        fact = random.choice(visible_facts)
-        fact_note = f" I remember that {fact.get('key')} is {fact.get('value')}."
-    grounding_note = ""
-    if grounding_pack and grounding_pack.get("key_points"):
-        grounding_note = " I have some background information that might be relevant."
-    return f"{style_prefix}you said: '{user_message}'.{fact_note}{grounding_note}"
-
-
-def _iter_text_chunks(text: str, chunk_size: int = 8) -> List[str]:
-    words = text.split(" ")
-    if len(words) <= 1:
-        return [text]
-    chunks = []
-    current = []
-    for word in words:
-        current.append(word)
-        if len(current) >= chunk_size:
-            chunks.append(" ".join(current))
-            current = []
-    if current:
-        chunks.append(" ".join(current))
-    spaced = [chunks[0]]
-    for chunk in chunks[1:]:
-        spaced.append(" " + chunk)
-    return spaced
 
 
 def _extract_stream_delta(chunk: Any) -> Optional[str]:
@@ -530,34 +479,38 @@ async def generate_coach_response(
 ) -> Dict[str, Any]:
     """Generate coaching suggestions for premium users.
 
-    The MVP returns a static set of suggestions with intent labels.
-    A real implementation would call a different language model with
-    a coaching prompt and enforce premium guardrails.
-    
     :return: A dictionary with keys describing the coaching content.
     """
-    suggestions = [
-        {"reply": "A", "text": "Acknowledge their point and ask a clarifying question.", "intent": "clarify"},
-        {"reply": "B", "text": "State your desired outcome clearly.", "intent": "assert"},
-        {"reply": "C", "text": "Offer a compromise to reach mutual agreement.", "intent": "compromise"},
-    ]
-    strategy = {
-        "anchoring": "Start with a high but reasonable demand to anchor the negotiation.",
-        "concessions": "Plan what you are willing to give up and when.",
-        "questions": "Prepare questions to understand their motivations.",
-        "red_lines": "Know your non‑negotiable boundaries.",
+    settings = get_settings()
+    if not settings.litellm_model:
+        raise RuntimeError("LiteLLM model is not configured; cannot generate coach output.")
+    payload = {
+        "user_message": user_message,
+        "visible_facts": visible_facts,
+        "grounding_pack": grounding_pack or {},
     }
-    after_action = "Consider how the conversation went and what you could improve next time."
-    critique = "Your message is clear, but you could anchor your request more explicitly."
-    scenario_branches = [
-        {"label": "Counterparty agrees", "next_step": "Ask about timelines and next steps."},
-        {"label": "Counterparty pushes back", "next_step": "Reframe with market data or role scope."},
-        {"label": "Counterparty delays", "next_step": "Ask what information they need to proceed."},
-    ]
-    return {
-        "suggestions": suggestions,
-        "strategy": strategy,
-        "critique": critique,
-        "scenario_branches": scenario_branches,
-        "after_action_report": after_action,
+    completion_kwargs = {
+        "model": settings.litellm_model,
+        "messages": [
+            {"role": "system", "content": COACH_SYSTEM_PROMPT},
+            {"role": "user", "content": json.dumps(payload)},
+        ],
+        "temperature": 0.3,
     }
+    if settings.litellm_api_key:
+        completion_kwargs["api_key"] = settings.litellm_api_key
+    if settings.litellm_base_url:
+        completion_kwargs["base_url"] = settings.litellm_base_url
+    try:
+        from instructor import from_litellm
+
+        client = from_litellm(acompletion_with_retry)
+        response = await client(response_model=CoachPanel, **completion_kwargs)
+        return response.model_dump()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Coach generation failed. Error: %s", exc)
+        response = await acompletion_with_retry(**completion_kwargs)
+        content = extract_completion_text(response)
+        if not content:
+            raise RuntimeError("LiteLLM returned an empty coach response.")
+        return CoachPanel.model_validate_json(content).model_dump()

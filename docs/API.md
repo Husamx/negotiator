@@ -32,15 +32,14 @@ Request:
 - enable_web_grounding (optional bool, default true)
 - web_grounding_trigger (optional enum: auto|user_requested)   # server validates
 
-Response (non-streaming):
-- counterparty_message
-- optional: coach_panel (premium)
-- optional: grounding_pack (when run this turn)
-- extracted_facts (session-only candidates)
-
-Streaming variant:
-- stream roleplay tokens
-- premium: stream coach panel separately
+Response (SSE streaming only):
+- event: token (string)
+- event: done (JSON payload)
+  - counterparty_message
+  - optional: coach_panel (premium)
+  - optional: grounding_pack (when run this turn)
+  - extracted_facts (session-only candidates)
+- event: error (JSON payload with detail)
 
 Hard rule:
 - channel="coach_private" MUST NOT update counterparty disclosure/knowledge state.

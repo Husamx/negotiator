@@ -263,10 +263,10 @@ Use **Tavily** Search API in v0.1.
 
 ### 12.4 Search agent responsibilities
 Implement a small web-grounding pipeline:
-1) NeedSearch Gate (rules-first; LLM only if uncertain)
-2) QueryPlanner (max 1–3 queries)
+1) NeedSearch Gate (LLM, strict schema)
+2) QueryPlanner (LLM, max 1–3 queries)
 3) Tavily Search
-4) EvidenceSynthesizer → Grounding Pack (bullets with citations, plus “uncertain/disputed”)
+4) EvidenceSynthesizer (LLM) → Grounding Pack (bullets with citations, plus “uncertain/disputed”)
 
 Hard rule: Do not invent facts; everything in the Grounding Pack must cite retrieved sources or be labeled unknown.
 

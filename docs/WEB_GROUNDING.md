@@ -11,7 +11,7 @@ culture/norms/etiquette, public policy, common practices, or time-sensitive fact
 
 ## 2. Pipeline (planner → search → interpreter)
 
-### 2.1 NeedSearch Gate (rules-first)
+### 2.1 NeedSearch Gate (LLM, strict schema)
 Inputs:
 - topic description (1–2 sentences)
 - template_id
@@ -31,13 +31,13 @@ Outputs (JSON):
 }
 ```
 
-Rule triggers (examples):
+Trigger examples (used as guidance for the agent):
 - culture/norms (“in Japan”, “custom”, “etiquette”, “norms”)
 - policy/legal (“is it legal”, “tenant rights”, “notice period”)
 - time-sensitive (“current”, “latest”, “typical market”, “2025”)
 - niche institutions/laws/policies (named bills, official policies)
 
-If rules are uncertain, call a small LLM gate with strict output schema.
+The agent always returns a strict JSON decision.
 
 ### 2.2 QueryPlanner (LLM, budgeted)
 - max 1–3 queries

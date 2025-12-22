@@ -61,14 +61,11 @@ separation of concerns, descriptive identifiers and type hints throughout.
 
 ## Extending
 
-This MVP includes only the core flows and stubs out complex functionality
-such as LLM orchestration and web search. To extend the system you can:
+This implementation uses LLM-driven agents for template routing,
+intake questions, grounding, visibility selection, coaching, and
+recap generation. To extend the system you can:
 
-* Implement structured extraction of facts using `instructor` and your
-  preferred language model.
-* Replace the heuristic template selector with an LLM classifier.
-* Integrate Tavily search by providing an API key and expanding the
-  synthesis logic.
-* Flesh out the knowledge graph service with CRUD endpoints for facts
-  and relationships.
+* Expand the agentic entity proposer and richer KG reasoning.
+* Expand the web-grounding agents (NeedSearch, QueryPlanner, Synthesizer)
+  with stronger constraints and evaluation.
 * Add richer safety filters as described in `docs/SAFETY.md`.
