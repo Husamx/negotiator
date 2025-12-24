@@ -11,6 +11,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { apiBase, apiGet, apiPost, apiPatch, apiDelete } from './api.js';
 import { layoutNodes } from './flowLayout.js';
+import StrategyRuntimePage from './StrategyRuntime.jsx';
 
 const VARIANT_LABELS = {
   LIKELY: 'Likely',
@@ -89,7 +90,6 @@ function MessageNode({ data }) {
     </div>
   );
 }
-
 const nodeTypes = { message: MessageNode };
 
 function buildGraph(messages, branches, handlers, selectedUserMessageId, loadingMessageId, activatingThreadId, activeThreadId, intakeSubmitted) {
@@ -215,7 +215,26 @@ function CanvasHeader({ session, onRefresh, onActivateMainline, activeThreadId, 
   );
 }
 
-export default function App() {
+function ViewToggle({ currentView, onSwitchView }) {
+  return (
+    <div className="view-toggle">
+      <button
+        className={`view-toggle-button ${currentView === 'canvas' ? 'active' : ''}`}
+        onClick={() => onSwitchView('canvas')}
+      >
+        Canvas view
+      </button>
+      <button
+        className={`view-toggle-button ${currentView === 'runtime' ? 'active' : ''}`}
+        onClick={() => onSwitchView('runtime')}
+      >
+        Strategy runtime
+      </button>
+    </div>
+  );
+}
+
+function CanvasApp({ currentView, onSwitchView }) {
   const params = new URLSearchParams(window.location.search);
   const [userId, setUserId] = useState(params.get('user_id') || '1');
   const [sessionId, setSessionId] = useState(params.get('session_id') || '');
@@ -243,6 +262,23 @@ export default function App() {
   const [submittingIntake, setSubmittingIntake] = useState(false);
   const activeThreadId = session?.active_thread_id;
   const rootThreadId = session?.root_thread_id;
+
+  useEffect(() => {
+    const nextParams = new URLSearchParams(window.location.search);
+    if (userId) {
+      nextParams.set('user_id', userId);
+    } else {
+      nextParams.delete('user_id');
+    }
+    if (sessionId) {
+      nextParams.set('session_id', sessionId);
+    } else {
+      nextParams.delete('session_id');
+    }
+    const search = nextParams.toString();
+    const nextUrl = `${window.location.pathname}${search ? `?${search}` : ''}`;
+    window.history.replaceState(null, '', nextUrl);
+  }, [userId, sessionId]);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -653,6 +689,10 @@ export default function App() {
     <div className="app-shell">
       <aside className="side-panel">
         <div className="panel-card">
+          <div className="panel-title">Workspace</div>
+          <ViewToggle currentView={currentView} onSwitchView={onSwitchView} />
+        </div>
+        <div className="panel-card">
           <div className="panel-title">User</div>
           <label className="field">
             User ID
@@ -838,4 +878,34 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+export default function App() {
+  const [view, setView] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('view') || 'canvas';
+  });
+
+  const handleSwitchView = useCallback((nextView) => {
+    setView(nextView);
+    const params = new URLSearchParams(window.location.search);
+    if (!nextView || nextView === 'canvas') {
+      params.delete('view');
+    } else {
+      params.set('view', nextView);
+    }
+    const search = params.toString();
+    const nextUrl = `${window.location.pathname}${search ? `?${search}` : ''}`;
+    window.history.replaceState(null, '', nextUrl);
+  }, []);
+
+  useEffect(() => {
+    document.title = view === 'runtime' ? 'Strategy Runtime' : 'Negotiation Canvas';
+  }, [view]);
+
+  if (view === 'runtime') {
+    return <StrategyRuntimePage onSwitchView={handleSwitchView} currentView={view} />;
+  }
+
+  return <CanvasApp onSwitchView={handleSwitchView} currentView={view} />;
 }

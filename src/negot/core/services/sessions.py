@@ -71,6 +71,7 @@ from .orchestrator import (
 from .question_planner import generate_intake_questions
 from .strategies import (
     execute_strategy_for_session,
+    get_latest_strategy_execution as fetch_latest_strategy_execution,
     get_latest_strategy_selection,
     get_strategy,
     list_strategies_summary,
@@ -1264,6 +1265,24 @@ async def get_case_snapshot_detail(
     return snapshot
 
 
+async def update_case_snapshot(
+    db: AsyncSession, user: User, session_id: int, patches: List[dict]
+) -> CaseSnapshot:
+    """Apply JSON patch updates to the case snapshot."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    snapshot = await get_or_create_case_snapshot(db, session, None)
+    updated_payload = apply_case_patches(snapshot.payload, patches)
+    updated_payload["updated_at"] = datetime.utcnow().isoformat()
+    try:
+        validate_case_snapshot(updated_payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Case snapshot validation failed (patch). Error: %s", exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid case snapshot update.") from exc
+    snapshot.payload = updated_payload
+    await db.flush()
+    return snapshot
+
+
 async def submit_intake(
     db: AsyncSession,
     user: User,
@@ -1292,6 +1311,14 @@ async def get_strategy_selection(
     """Return the latest strategy selection for the session."""
     session = await _get_session_or_404(db, session_id, user.id)
     return await get_latest_strategy_selection(db, session.id)
+
+
+async def get_latest_strategy_execution(
+    db: AsyncSession, user: User, session_id: int
+) -> Optional[StrategyExecution]:
+    """Return the latest strategy execution for the session."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    return await fetch_latest_strategy_execution(db, session.id)
 
 
 async def run_strategy_selection_for_session(

@@ -107,6 +107,18 @@ async def get_latest_strategy_selection(
     return result.scalar_one_or_none()
 
 
+async def get_latest_strategy_execution(
+    db: AsyncSession, session_id: int
+) -> Optional[StrategyExecution]:
+    result = await db.execute(
+        select(StrategyExecution)
+        .where(StrategyExecution.session_id == session_id)
+        .order_by(desc(StrategyExecution.created_at))
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def execute_strategy_for_session(
     db: AsyncSession,
     session: Session,

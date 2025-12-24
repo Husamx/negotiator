@@ -14,6 +14,7 @@ from ..dependencies import CurrentUser, DatabaseSession
 from ...core.services import sessions as sessions_service
 from ...core.schemas import (
     CaseSnapshotOut,
+    CaseSnapshotUpdateRequest,
     CreateSessionRequest,
     CreateSessionResponse,
     BranchCopyRequest,
@@ -154,6 +155,18 @@ async def get_case_snapshot(
     return CaseSnapshotOut.model_validate(snapshot)
 
 
+@router.patch("/{session_id}/case-snapshot", response_model=CaseSnapshotOut)
+async def update_case_snapshot(
+    req: CaseSnapshotUpdateRequest,
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+) -> CaseSnapshotOut:
+    """Apply JSON patch updates to the case snapshot."""
+    snapshot = await sessions_service.update_case_snapshot(db, user, session_id, req.patches)
+    return CaseSnapshotOut.model_validate(snapshot)
+
+
 @router.post("/{session_id}/intake", response_model=IntakeSubmitResponse)
 async def submit_intake(
     req: IntakeSubmitRequest,
@@ -233,6 +246,19 @@ async def execute_strategy(
         req.strategy_id,
         req.inputs,
     )
+    return StrategyExecutionOut.model_validate(execution)
+
+
+@router.get("/{session_id}/strategy/executions/latest", response_model=StrategyExecutionOut)
+async def get_latest_execution(
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+) -> StrategyExecutionOut:
+    """Get the latest strategy execution for the session."""
+    execution = await sessions_service.get_latest_strategy_execution(db, user, session_id)
+    if execution is None:
+        raise HTTPException(status_code=404, detail="Strategy execution not found.")
     return StrategyExecutionOut.model_validate(execution)
 
 

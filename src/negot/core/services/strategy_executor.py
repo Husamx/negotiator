@@ -52,6 +52,86 @@ def _now_iso() -> str:
     return datetime.utcnow().isoformat()
 
 
+def _build_failure_response(
+    *,
+    strategy: dict,
+    inputs: dict,
+    case_id: str,
+    reason: str,
+    detail: str,
+) -> StrategyExecutionResponse:
+    artifact = {
+        "artifact_id": f"ARTIFACT_{strategy['strategy_id']}_ERROR",
+        "type": "CHECKLIST",
+        "title": "Execution failed",
+        "created_at": _now_iso(),
+        "content": {
+            "items": [
+                {
+                    "id": "EXECUTION_PARSE_ERROR",
+                    "description": reason,
+                    "remediation": "Check model configuration or retry the run.",
+                    "severity": "BLOCKER",
+                    "detail": detail[:500],
+                }
+            ]
+        },
+        "metadata": {
+            "case_id": case_id,
+            "strategy_id": strategy["strategy_id"],
+            "strategy_revision": strategy.get("revision", 1),
+            "inputs_used": inputs,
+        },
+    }
+    return StrategyExecutionResponse(
+        artifacts=[artifact],
+        case_patches=[],
+        judge_outputs=[
+            {
+                "rubric_id": "EXECUTION_ERROR",
+                "overall_score": 0,
+                "dimension_scores": [],
+                "flags": [
+                    {
+                        "flag_id": "EXECUTION_PARSE_ERROR",
+                        "severity": "BLOCK_SEND",
+                        "message": reason,
+                        "span_hint": "draft_text",
+                    }
+                ],
+                "suggestions": [],
+            }
+        ],
+        trace={
+            "strategy_id": strategy["strategy_id"],
+            "strategy_revision": strategy.get("revision", 1),
+            "inputs_used": inputs,
+            "generated_at": _now_iso(),
+            "blocked": True,
+            "error": reason,
+            "error_detail": detail[:500],
+        },
+    )
+
+
+def _coerce_execution_payload(
+    extracted: dict, case_snapshot: dict, strategy: dict, inputs: dict
+) -> dict:
+    if "request" in extracted and "response" in extracted:
+        return extracted
+    if "response" in extracted:
+        return {
+            "request": {"case_snapshot": case_snapshot, "strategy": strategy, "inputs": inputs},
+            "response": extracted.get("response") or {},
+        }
+    if any(key in extracted for key in ("artifacts", "case_patches", "judge_outputs", "trace")):
+        return {
+            "request": {"case_snapshot": case_snapshot, "strategy": strategy, "inputs": inputs},
+            "response": extracted,
+        }
+    return extracted
+
+
 def _failed_prereqs(strategy: dict, case_snapshot: dict) -> List[dict]:
     failed = []
     for prereq in strategy.get("applicability", {}).get("prerequisites", []):
@@ -197,18 +277,52 @@ async def execute_strategy(
         completion_kwargs["api_key"] = settings.litellm_api_key
     if settings.litellm_base_url:
         completion_kwargs["base_url"] = settings.litellm_base_url
-    response = await acompletion_with_retry(**completion_kwargs)
-    content = extract_completion_text(response)
-    if not content:
-        raise RuntimeError("LiteLLM returned an empty strategy execution output.")
+    execution = None
     try:
-        execution = StrategyExecutionIO.model_validate_json(content)
+        from instructor import from_litellm
+
+        client = from_litellm(acompletion_with_retry)
+        execution = await client(response_model=StrategyExecutionIO, **completion_kwargs)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to parse strategy execution output. Error: %s", exc)
-        extracted = extract_json_object(content)
-        if extracted is None:
-            raise
-        execution = StrategyExecutionIO.model_validate(extracted)
+        logger.warning("Instructor parsing failed for strategy execution: %s", exc)
+        response = await acompletion_with_retry(**completion_kwargs)
+        content = extract_completion_text(response)
+        if not content:
+            raise RuntimeError("LiteLLM returned an empty strategy execution output.")
+        try:
+            execution = StrategyExecutionIO.model_validate_json(content)
+        except Exception as parse_exc:  # noqa: BLE001
+            logger.warning("Failed to parse strategy execution output. Error: %s", parse_exc)
+            extracted = extract_json_object(content)
+            if extracted is None:
+                return _build_failure_response(
+                    strategy=strategy,
+                    inputs=inputs,
+                    case_id=case_id,
+                    reason="Strategy execution output was not valid JSON.",
+                    detail=f"{parse_exc}. raw_output_preview={content[:400]}",
+                )
+            payload = _coerce_execution_payload(extracted, case_snapshot, strategy, inputs)
+            try:
+                execution = StrategyExecutionIO.model_validate(payload)
+            except Exception as inner_exc:  # noqa: BLE001
+                return _build_failure_response(
+                    strategy=strategy,
+                    inputs=inputs,
+                    case_id=case_id,
+                    reason="Strategy execution output did not match the expected schema.",
+                    detail=str(inner_exc),
+                )
+    if execution is None:
+        return _build_failure_response(
+            strategy=strategy,
+            inputs=inputs,
+            case_id=case_id,
+            reason="Strategy execution did not return a response.",
+            detail="No response parsed from model output.",
+        )
+    if not isinstance(execution, StrategyExecutionIO):
+        execution = StrategyExecutionIO.model_validate(execution)
     artifacts = _normalize_artifacts(execution.response.artifacts, strategy, inputs, case_id)
     judge_outputs = _apply_auto_gates(strategy, case_snapshot, artifacts, execution.response.judge_outputs)
     trace = execution.response.trace or {}

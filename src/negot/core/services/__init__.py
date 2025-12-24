@@ -13,6 +13,7 @@ from . import (  # noqa: F401
     kg,
     orchestrator,
     question_planner,
+    route_generator,
     sessions,
     strategies,
     strategy_executor,

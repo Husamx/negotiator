@@ -60,7 +60,9 @@
       "key": "topic",
       "label": "Topic you need clarity on",
       "type": "STRING",
-      "required": true
+      "required": true,
+      "bind_to_case_path": "/issues/0/name",
+      "help": "Defaults to the primary issue seeded from your session topic."
     }
   ],
   "steps": [
