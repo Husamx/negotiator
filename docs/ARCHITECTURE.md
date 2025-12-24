@@ -21,9 +21,13 @@ This doc describes a minimal architecture that satisfies `docs/REQUIREMENTS.md`.
 5) **Visibility Service** (LLM selection using knowledge edges + disclosures)
 6) **Web Grounding Service** (LLM NeedSearch -> LLM query planning -> Tavily -> LLM synthesis)
 7) **LLM Orchestrator** (LangGraph state graph for roleplay + coaching; Instructor for extraction)
-8) **Events Service** (append-only log)
-9) **Observability** (Langfuse traces + prompt/version tracking)
-10) **Auth/Tier Gate** (standard vs premium)
+8) **Strategy Pack Service** (load/validate packs, strategies, rubrics)
+9) **Case Snapshot Service** (structured negotiation state)
+10) **Strategy Selection Service** (LLM ranks strategies from snapshot)
+11) **Strategy Execution Service** (artifacts + rubric critiques + JSON patches)
+12) **Events Service** (append-only log)
+13) **Observability** (Langfuse traces + prompt/version tracking)
+14) **Auth/Tier Gate** (standard vs premium)
 
 Implementation may begin as a monolith, but keep internal module boundaries.
 
@@ -32,29 +36,33 @@ Implementation may begin as a monolith, but keep internal module boundaries.
 ### 2.1 Session start flow
 1) TopicRouter (LLM) -> template_id (or `other`)
 2) EntityProposer (LLM) (suggest entities/roles)
-3) QuestionPlanner (LLM) (minimal questions; skip logic)
-4) SetupComplete → session starts
-
+3) CaseSnapshot init (domain/channel/stage/default issue)
+4) QuestionPlanner (LLM) (minimal questions; includes strategy-signal questions)
+5) Intake submission updates CaseSnapshot (LLM JSON patches)
+6) StrategySelection (LLM) -> ranked strategies
+7) SetupComplete -> session starts
 ### 2.2 Per-turn flow
 Input: user message `m_t`
 
 1) Persist message
-2) Extract candidates (facts + entity updates; session-only; LLM extraction)
-3) Disclosure update (counterparty learned facts in this session scope)
-4) Retrieve context:
+2) Update CaseSnapshot (LLM JSON patches + timeline append)
+3) Load selected strategy context (from intake selection; no per-turn refresh)
+4) Extract candidates (facts + entity updates; session-only; LLM extraction)
+5) Disclosure update (counterparty learned facts in this session scope)
+6) Retrieve context:
    - attached entities only
-   - 1–2 hop subgraph
+   - 1-2 hop subgraph
    - template-filtered + recency-weighted
-5) Web grounding (optional):
+7) Web grounding (optional):
    - LLM NeedSearch decides if web grounding is required
    - if yes, run Web Grounding Service and attach Grounding Pack
-6) Visibility filter:
+8) Visibility filter:
    - LLM selects visible facts using knowledge edges + disclosures
-7) LangGraph orchestrator builds prompt context (system + history + visible facts)
-8) Roleplay generation (counterparty message)
-9) Premium only:
+9) LangGraph orchestrator builds prompt context (system + history + visible facts + selected strategy)
+10) Roleplay generation (counterparty message)
+11) Premium only:
    - Coach generation (separate channel)
-10) Emit events for each step (including ORCHESTRATION_CONTEXT_BUILT with prompt messages)
+12) Emit events for each step (including ORCHESTRATION_CONTEXT_BUILT with prompt messages)
 
 ### 2.2.1 LangGraph nodes (v0.1)
 LangGraph is mandatory for roleplay + coaching orchestration in all tiers.
@@ -74,6 +82,11 @@ Even if the DB stores epistemic knowledge sparsely (absence means unknown), the 
 
 Hard rule: roleplay may only reference `visible_facts` + grounded web context; everything else is unknown.
 
+### 2.2.2 Strategy execution (user-triggered)
+1) User runs selected strategy (no manual strategy picking required)
+2) StrategyExecutor generates artifacts + judge outputs
+3) Apply case patches (preview if UI supports)
+4) Persist StrategyExecution + artifacts + events
 ### 2.3 Session end flow
 1) Recap:
    - Standard: descriptive only
@@ -109,3 +122,11 @@ To replay a session deterministically, store:
 - Add a post-generation “no-coaching” + “no invented facts” validator for Standard.
 
 See `docs/SAFETY.md`.
+## 6. Strategy system integration plan
+- Load and validate strategy packs at startup (schemas + manifests).
+- Maintain a CaseSnapshot per session (intake + message updates via JSON patch).
+- Run LLM-based strategy selection once after intake; reuse per turn.
+- Inject selected strategy context into roleplay prompts (no user-facing reveal).
+- Provide strategy controls embedded in the chat experience for execution/artifacts.
+- Persist StrategySelection and StrategyExecution outputs with events.
+

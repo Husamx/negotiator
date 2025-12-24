@@ -22,6 +22,7 @@ from .routers import knowledge_edges as knowledge_edges_router
 from .routers import knowledge_graph as kg_router
 from .routers import relationships as relationships_router
 from .routers import sessions as sessions_router
+from .routers import strategies as strategies_router
 from .routers import templates as templates_router
 from .routers import users as users_router
 
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(relationships_router.router)
     app.include_router(knowledge_edges_router.router)
     app.include_router(templates_router.router)
+    app.include_router(strategies_router.router)
     app.include_router(admin_router.router)
     app.include_router(users_router.router)
     return app

@@ -10,6 +10,8 @@ Selections are intended to be compatible with commercial use (permissive OSS lic
 - HTTPX: async HTTP client (LLM + Tavily calls if not using SDK).
 - tenacity: retries/backoff around provider calls.
 - orjson: fast JSON encoding/decoding (used for SSE payloads).
+- jsonschema: JSON Schema validation for strategy packs and snapshots.
+- jsonpatch: RFC6902 patch application for CaseSnapshot updates.
 
 ## Data layer
 - PostgreSQL: system of record.

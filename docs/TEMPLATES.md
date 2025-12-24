@@ -41,5 +41,9 @@ Hard rule: agents must not invent values to satisfy readiness.
 ## 3. “Other” generic template
 Ask up to 5 questions then start roleplay. Do not infer counterparty goals if unknown.
 
+## 5. Strategy selection interplay
+- Intake questions should capture signals needed for strategy selection.
+- CaseSnapshot updates from template intake feed into the strategy selector.
+- Strategies are auto-selected; users are not asked to choose.
 ## 4. Draft templates + proposal workflow
 See `docs/ADMIN_REVIEW.md`.

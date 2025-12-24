@@ -14,6 +14,7 @@ Request:
 - topic_text (string)
 - counterparty_style (optional)
 - attached_entity_ids (optional list)
+- channel (optional: EMAIL, DM, IN_PERSON_NOTES)
 
 Response:
 - session_id
@@ -39,6 +40,7 @@ Response (SSE streaming only):
   - optional: coach_panel (premium)
   - optional: grounding_pack (when run this turn)
   - extracted_facts (session-only candidates)
+  - strategy_selection (latest selection payload)
 - event: error (JSON payload with detail)
 
 Hard rule:
@@ -56,6 +58,48 @@ Request:
 - decisions: [{ fact_id, decision: save_global|save_session_only|discard }]
 Response:
 - updated KG summary
+### 2.5 Intake submission
+`POST /sessions/{session_id}/intake`
+
+Request:
+- questions (list)
+- answers (object)
+- summary (optional string)
+
+Response:
+- case_snapshot (object)
+- strategy_selection (selection payload + selected_strategy_id)
+
+### 2.6 Case snapshot
+`GET /sessions/{session_id}/case-snapshot`
+
+Response:
+- case_snapshot payload for the session
+
+### 2.7 Strategy selection
+`GET /sessions/{session_id}/strategy/selection`
+`POST /sessions/{session_id}/strategy/selection`
+
+Notes:
+- Strategy selection is created during intake submission.
+- POST is idempotent and returns the existing selection if one already exists.
+
+Response:
+- selected_strategy_id
+- selection_payload (ranked strategies + rationale)
+
+### 2.8 Strategy execution
+`POST /sessions/{session_id}/strategy/execute`
+
+Request:
+- strategy_id (optional; defaults to selected)
+- inputs (object)
+
+Response:
+- artifacts
+- case_patches
+- judge_outputs
+- trace
 
 ## 3. Web grounding (explicit endpoint)
 Optional explicit endpoint (useful for UI refresh/debug):
@@ -85,6 +129,10 @@ Premium-only editing (Standard read-only at API level).
 - GET /templates/drafts (per-user)
 - POST /templates/proposals (enqueue review)
 
-## 7. Admin (internal)
+## 7. Strategies
+- GET /strategies (list enabled strategies)
+- GET /strategies/{strategy_id} (full strategy template)
+
+## 8. Admin (internal)
 - GET /admin/template-proposals
 - POST /admin/template-proposals/{id}/approve|reject|edit

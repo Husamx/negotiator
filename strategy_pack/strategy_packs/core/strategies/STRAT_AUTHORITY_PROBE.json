@@ -1,0 +1,190 @@
+{
+  "strategy_id": "STRAT_AUTHORITY_PROBE",
+  "revision": 1,
+  "name": "Authority probing",
+  "category": "INFORMATION",
+  "subcategories": [],
+  "tags": [
+    "AUTHORITY",
+    "PROCESS",
+    "EMAIL",
+    "DM"
+  ],
+  "summary": "Identify who can approve terms and what the decision process is to avoid late-stage surprises.",
+  "goal": "Prevent last-minute 'I need to check' delays and negotiate with the real decision-maker.",
+  "counterparty_guidance": [
+    "Clarify your decision process without over-disclosing internal limits.",
+    "State who decides and what inputs matter, then ask about their authority.",
+    "Avoid committing until the right stakeholders are aligned.",
+    "Propose a clear next step to move the decision forward."
+  ],
+  "rationale": "",
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ],
+    "channels": [
+      "EMAIL",
+      "DM",
+      "IN_PERSON_NOTES"
+    ],
+    "when_to_use": [
+      "Use when you need a structured move to progress the negotiation."
+    ],
+    "when_not_to_use": [
+      "Avoid when facts are missing and you need intake/clarification first."
+    ],
+    "prerequisites": [
+      {
+        "id": "PREREQ_HAS_OBJECTIVES",
+        "description": "Case objectives exist (target/acceptable/walk-away).",
+        "condition": {
+          "type": "PREDICATE",
+          "predicate": {
+            "op": "EXISTS",
+            "path": "/objectives/target"
+          }
+        },
+        "severity": "WARNING",
+        "remediation": "Fill target/acceptable/walk-away in the Strategy Canvas."
+      }
+    ]
+  },
+  "inputs": [
+    {
+      "key": "decision_process_question",
+      "label": "Decision process question",
+      "type": "STRING",
+      "required": false,
+      "default": "Who needs to approve this and what are the next steps after we align?"
+    }
+  ],
+  "steps": [
+    {
+      "step_id": "STEP_VALIDATE",
+      "title": "Validate context and prerequisites",
+      "instruction": "Validate prerequisites, restate the intended move, and identify missing info that would improve execution.",
+      "agent_actions": [
+        {
+          "action": "Load case snapshot",
+          "tool": "RETRIEVE_CASE",
+          "output_key": "case"
+        }
+      ],
+      "outputs": [
+        "PLAN_PATCH"
+      ],
+      "notes": "If blockers exist, return remediation instead of artifacts."
+    },
+    {
+      "step_id": "STEP_EXECUTE",
+      "title": "Execute the strategy",
+      "instruction": "Generate the required artifacts (drafts, packages, checklist) and run critique rubrics before presenting to the user.",
+      "agent_actions": [
+        {
+          "action": "Generate message drafts",
+          "tool": "GENERATE_MESSAGE_DRAFTS",
+          "output_key": "drafts"
+        },
+        {
+          "action": "Critique drafts",
+          "tool": "CRITIQUE_MESSAGE",
+          "output_key": "judge"
+        }
+      ],
+      "outputs": [
+        "MESSAGE_DRAFTS",
+        "DECISION_LOG"
+      ]
+    }
+  ],
+  "scripts": {
+    "snippets": [],
+    "templates": []
+  },
+  "branches": [
+    {
+      "branch_id": "BRANCH_POLICY_WALL",
+      "label": "They cite policy, budget, or fixed constraints",
+      "trigger": {
+        "type": "ANY",
+        "any": [
+          {
+            "type": "PREDICATE",
+            "predicate": {
+              "op": "CONTAINS",
+              "path": "/timeline/recent_events/0/raw_text",
+              "value": "policy"
+            }
+          },
+          {
+            "type": "PREDICATE",
+            "predicate": {
+              "op": "CONTAINS",
+              "path": "/timeline/recent_events/0/raw_text",
+              "value": "budget"
+            }
+          }
+        ]
+      },
+      "recommended_move": {
+        "move_type": "ASK_QUESTION",
+        "instruction": "Acknowledge the constraint and ask what flexibility exists (other issues, timing, structure) before proposing a new trade-off."
+      },
+      "outputs": [
+        "MESSAGE_DRAFTS",
+        "CHECKLIST"
+      ],
+      "risk_notes": "Avoid arguing; pivot to constraints and options."
+    }
+  ],
+  "evaluation": {
+    "rubric_ids": [
+      "RUBRIC_MESSAGE_QUALITY",
+      "RUBRIC_NEGOTIATION_SAFETY"
+    ],
+    "success_criteria": [
+      "Move is explicit and progresses the negotiation.",
+      "Message includes a next step or calibrated question."
+    ],
+    "failure_modes": [
+      "Vague ask.",
+      "Unnecessary disclosure of urgency or bottom line."
+    ],
+    "do_not_do": [
+      "Do not fabricate facts.",
+      "Do not reveal your bottom line unless intentionally walking away."
+    ],
+    "auto_gates": [
+      {
+        "gate_id": "GATE_BOTTOM_LINE_LANGUAGE",
+        "description": "Warn or block if explicit bottom line language is present.",
+        "condition": {
+          "type": "PREDICATE",
+          "predicate": {
+            "op": "MATCHES",
+            "path": "/execution_context/draft_text",
+            "regex": "(minimum|bottom line|final offer)"
+          }
+        },
+        "severity": "WARN"
+      }
+    ]
+  },
+  "ui": {
+    "card_title": "Authority probing",
+    "card_summary": "Identify who can approve terms and what the decision process is to avoid late-stage surprises.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "references": []
+}

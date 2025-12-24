@@ -1,0 +1,88 @@
+{
+  "$id": "https://negot.ai/schemas/common.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Common Types",
+  "type": "object",
+  "definitions": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Z0-9_\\-\\.]{3,128}$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-.]+)?(?:\\+[0-9A-Za-z-.]+)?$"
+    },
+    "iso_datetime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "iso_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "currency_code": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$",
+      "examples": [
+        "GBP",
+        "USD",
+        "EUR"
+      ]
+    },
+    "money": {
+      "type": "object",
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "type": "number"
+        },
+        "currency": {
+          "$ref": "#/definitions/currency_code"
+        }
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "json_patch_op": {
+      "type": "object",
+      "required": [
+        "op",
+        "path"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "add",
+            "remove",
+            "replace",
+            "move",
+            "copy",
+            "test"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "value": {}
+      }
+    },
+    "json_patch": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/json_patch_op"
+      }
+    }
+  }
+}

@@ -50,9 +50,12 @@ class OrchestrationState(TypedDict, total=False):
     visible_facts: List[Dict[str, Any]]
     grounding_pack: Optional[Dict[str, Any]]
     style: Optional[str]
+    counterparty_stance: Optional[str]
+    counterparty_constraints: Optional[List[str]]
     history: List[Dict[str, str]]
     topic_text: Optional[str]
     template_id: Optional[str]
+    strategy_context: Optional[Dict[str, Any]]
     include_coach: bool
     stream_roleplay: bool
     prompt_messages: List[Dict[str, str]]
@@ -242,6 +245,9 @@ async def generate_roleplay_response(
     grounding_pack: Optional[Dict[str, Any]],
     style: Optional[str],
     history: Optional[List[Dict[str, str]]] = None,
+    strategy_context: Optional[Dict[str, Any]] = None,
+    counterparty_stance: Optional[str] = None,
+    counterparty_constraints: Optional[List[str]] = None,
 ) -> str:
     """Generate a simulated counterparty response.
 
@@ -256,7 +262,16 @@ async def generate_roleplay_response(
     :param style: Counterparty persona style (polite, neutral, tough, busy, defensive).
     :return: A roleplay response string.
     """
-    messages = build_roleplay_messages(user_message, visible_facts, grounding_pack, style, history)
+    messages = build_roleplay_messages(
+        user_message,
+        visible_facts,
+        grounding_pack,
+        style,
+        history,
+        strategy_context=strategy_context,
+        counterparty_stance=counterparty_stance,
+        counterparty_constraints=counterparty_constraints,
+    )
     return await _generate_roleplay_from_prompt(
         messages, user_message, visible_facts, grounding_pack, style
     )
@@ -269,13 +284,23 @@ async def generate_roleplay_stream(
     style: Optional[str],
     history: Optional[List[Dict[str, str]]] = None,
     prompt_messages: Optional[List[Dict[str, str]]] = None,
+    strategy_context: Optional[Dict[str, Any]] = None,
+    counterparty_stance: Optional[str] = None,
+    counterparty_constraints: Optional[List[str]] = None,
 ):
     """Stream a simulated counterparty response."""
     settings = get_settings()
     if not settings.litellm_model:
         raise RuntimeError("LiteLLM model is not configured; cannot stream roleplay.")
     messages = prompt_messages or build_roleplay_messages(
-        user_message, visible_facts, grounding_pack, style, history
+        user_message,
+        visible_facts,
+        grounding_pack,
+        style,
+        history,
+        strategy_context=strategy_context,
+        counterparty_stance=counterparty_stance,
+        counterparty_constraints=counterparty_constraints,
     )
     try:
         completion_kwargs = {
@@ -317,6 +342,9 @@ def build_roleplay_messages(
     history: Optional[List[Dict[str, str]]] = None,
     topic_text: Optional[str] = None,
     template_id: Optional[str] = None,
+    strategy_context: Optional[Dict[str, Any]] = None,
+    counterparty_stance: Optional[str] = None,
+    counterparty_constraints: Optional[List[str]] = None,
 ) -> List[Dict[str, str]]:
     system_lines = [
         "You are the counterparty in a negotiation roleplay.",
@@ -329,8 +357,31 @@ def build_roleplay_messages(
         system_lines.append(f"Session topic: {topic_text}")
     if template_id:
         system_lines.append(f"Template: {template_id}")
+    if strategy_context:
+        name = strategy_context.get("name") or strategy_context.get("strategy_id")
+        summary = strategy_context.get("summary")
+        goal = strategy_context.get("goal")
+        system_lines.append("Selected user strategy (context only, do not coach or reveal):")
+        if name:
+            system_lines.append(f"- Strategy: {name}")
+        if summary:
+            system_lines.append(f"- Summary: {summary}")
+        if goal:
+            system_lines.append(f"- Goal: {goal}")
+        counter_guidance = strategy_context.get("counterparty_guidance")
+        if isinstance(counter_guidance, list) and counter_guidance:
+            system_lines.append("Counterparty response guidance (use silently, do not reveal):")
+            for item in counter_guidance:
+                if item:
+                    system_lines.append(f"- {item}")
     if style:
         system_lines.append(f"Counterparty style: {style}.")
+    if counterparty_stance:
+        system_lines.append(f"Counterparty stance: {counterparty_stance}")
+    if counterparty_constraints:
+        constraints = [item for item in counterparty_constraints if item]
+        if constraints:
+            system_lines.append("Counterparty constraints:\n" + "\n".join(f"- {item}" for item in constraints))
     if visible_facts:
         fact_lines = [f"- {fact.get('key')}: {fact.get('value')}" for fact in visible_facts]
         system_lines.append("Visible facts:\n" + "\n".join(fact_lines))
@@ -363,6 +414,9 @@ def _build_prompt_node(state: OrchestrationState) -> Dict[str, Any]:
         state.get("history"),
         state.get("topic_text"),
         state.get("template_id"),
+        state.get("strategy_context"),
+        state.get("counterparty_stance"),
+        state.get("counterparty_constraints"),
     )
     return {"prompt_messages": messages}
 
@@ -380,6 +434,9 @@ async def _roleplay_node(state: OrchestrationState) -> Dict[str, Any]:
             state.get("history"),
             state.get("topic_text"),
             state.get("template_id"),
+            state.get("strategy_context"),
+            state.get("counterparty_stance"),
+            state.get("counterparty_constraints"),
         )
     response = await _generate_roleplay_from_prompt(
         messages,
@@ -398,6 +455,7 @@ async def _coach_node(state: OrchestrationState) -> Dict[str, Any]:
         state["user_message"],
         state.get("visible_facts", []),
         state.get("grounding_pack"),
+        state.get("strategy_context"),
     )
     return {"coach_panel": coach_panel}
 
@@ -435,6 +493,9 @@ async def run_orchestration(
     history: Optional[List[Dict[str, str]]],
     topic_text: Optional[str] = None,
     template_id: Optional[str] = None,
+    strategy_context: Optional[Dict[str, Any]] = None,
+    counterparty_stance: Optional[str] = None,
+    counterparty_constraints: Optional[List[str]] = None,
     include_coach: bool = False,
     stream_roleplay: bool = True,
 ) -> OrchestrationState:
@@ -446,6 +507,9 @@ async def run_orchestration(
         "history": history or [],
         "topic_text": topic_text,
         "template_id": template_id,
+        "strategy_context": strategy_context,
+        "counterparty_stance": counterparty_stance,
+        "counterparty_constraints": counterparty_constraints or [],
         "include_coach": include_coach,
         "stream_roleplay": stream_roleplay,
     }
@@ -476,6 +540,7 @@ async def generate_coach_response(
     user_message: str,
     visible_facts: List[Dict[str, Any]],
     grounding_pack: Optional[Dict[str, Any]],
+    strategy_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Generate coaching suggestions for premium users.
 
@@ -488,6 +553,7 @@ async def generate_coach_response(
         "user_message": user_message,
         "visible_facts": visible_facts,
         "grounding_pack": grounding_pack or {},
+        "strategy_context": strategy_context or {},
     }
     completion_kwargs = {
         "model": settings.litellm_model,

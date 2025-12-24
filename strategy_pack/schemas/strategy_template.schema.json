@@ -1,0 +1,613 @@
+{
+  "$id": "https://negot.ai/schemas/strategy_template.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Template",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "strategy_id",
+    "revision",
+    "name",
+    "category",
+    "summary",
+    "goal",
+    "counterparty_guidance",
+    "applicability",
+    "inputs",
+    "steps",
+    "scripts",
+    "branches",
+    "evaluation"
+  ],
+  "properties": {
+    "strategy_id": {
+      "$ref": "common.schema.json#/definitions/id"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 3
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "SETUP",
+        "INFORMATION",
+        "VALUE_CREATE",
+        "VALUE_CLAIM",
+        "COMMUNICATION",
+        "DEADLOCK",
+        "MULTI_PARTY",
+        "RISK_CONTROL"
+      ]
+    },
+    "subcategories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 2
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 2
+      }
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 20
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 10
+    },
+    "counterparty_guidance": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "string",
+        "minLength": 10
+      }
+    },
+    "rationale": {
+      "type": "string"
+    },
+    "applicability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "domains",
+        "channels",
+        "when_to_use",
+        "when_not_to_use",
+        "prerequisites"
+      ],
+      "properties": {
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "GENERAL",
+              "RENT_HOUSING",
+              "PROCUREMENT_VENDOR",
+              "JOB_OFFER_COMP",
+              "SERVICES_CONTRACTOR",
+              "PERSONAL_FAMILY"
+            ]
+          }
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "EMAIL",
+              "DM",
+              "IN_PERSON_NOTES"
+            ]
+          }
+        },
+        "when_to_use": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "when_not_to_use": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "description",
+              "condition",
+              "severity",
+              "remediation"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "common.schema.json#/definitions/id"
+              },
+              "description": {
+                "type": "string"
+              },
+              "condition": {
+                "$ref": "conditions.schema.json"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "BLOCKER",
+                  "WARNING",
+                  "INFO"
+                ]
+              },
+              "remediation": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "label",
+          "type",
+          "required"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,64}$"
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "STRING",
+              "NUMBER",
+              "BOOLEAN",
+              "MONEY",
+              "ENUM",
+              "STRING_LIST",
+              "ISSUE_LIST",
+              "PACKAGE_LIST"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "enum_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default": {},
+          "help": {
+            "type": "string"
+          },
+          "bind_to_case_path": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "step_id",
+          "title",
+          "instruction",
+          "outputs"
+        ],
+        "properties": {
+          "step_id": {
+            "$ref": "common.schema.json#/definitions/id"
+          },
+          "title": {
+            "type": "string"
+          },
+          "instruction": {
+            "type": "string",
+            "minLength": 20
+          },
+          "agent_actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "action",
+                "tool",
+                "output_key"
+              ],
+              "properties": {
+                "action": {
+                  "type": "string"
+                },
+                "tool": {
+                  "type": "string",
+                  "enum": [
+                    "RETRIEVE_CASE",
+                    "RETRIEVE_EVIDENCE",
+                    "GENERATE_PACKAGES",
+                    "GENERATE_MESSAGE_DRAFTS",
+                    "GENERATE_OBJECTION_CARDS",
+                    "CRITIQUE_MESSAGE",
+                    "UPDATE_PLAN_PATCH"
+                  ]
+                },
+                "input_bindings": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "output_key": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "PLAN_PATCH",
+                "OFFER_PACKAGES",
+                "MESSAGE_DRAFTS",
+                "OBJECTION_CARDS",
+                "CHECKLIST",
+                "DECISION_LOG"
+              ]
+            }
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "scripts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snippets",
+        "templates"
+      ],
+      "properties": {
+        "snippets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "snippet_id",
+              "label",
+              "channel",
+              "tone",
+              "text",
+              "placeholders"
+            ],
+            "properties": {
+              "snippet_id": {
+                "$ref": "common.schema.json#/definitions/id"
+              },
+              "label": {
+                "type": "string"
+              },
+              "channel": {
+                "type": "string",
+                "enum": [
+                  "EMAIL",
+                  "DM",
+                  "IN_PERSON_NOTES"
+                ]
+              },
+              "tone": {
+                "type": "string",
+                "enum": [
+                  "WARM",
+                  "NEUTRAL",
+                  "FIRM"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 10
+              },
+              "placeholders": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^\\{[A-Z0-9_]{2,64}\\}$"
+                }
+              }
+            }
+          }
+        },
+        "templates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "template_id",
+              "channel",
+              "tone",
+              "structure"
+            ],
+            "properties": {
+              "template_id": {
+                "$ref": "common.schema.json#/definitions/id"
+              },
+              "channel": {
+                "type": "string",
+                "enum": [
+                  "EMAIL",
+                  "DM",
+                  "IN_PERSON_NOTES"
+                ]
+              },
+              "tone": {
+                "type": "string",
+                "enum": [
+                  "WARM",
+                  "NEUTRAL",
+                  "FIRM"
+                ]
+              },
+              "structure": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "block",
+                    "content_ref"
+                  ],
+                  "properties": {
+                    "block": {
+                      "type": "string",
+                      "enum": [
+                        "OPENING",
+                        "CONTEXT",
+                        "ASK",
+                        "JUSTIFICATION",
+                        "TRADE",
+                        "CLOSE",
+                        "NEXT_STEP"
+                      ]
+                    },
+                    "content_ref": {
+                      "type": "string",
+                      "minLength": 3
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "branches": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "branch_id",
+          "trigger",
+          "label",
+          "recommended_move",
+          "outputs"
+        ],
+        "properties": {
+          "branch_id": {
+            "$ref": "common.schema.json#/definitions/id"
+          },
+          "label": {
+            "type": "string"
+          },
+          "trigger": {
+            "$ref": "conditions.schema.json"
+          },
+          "recommended_move": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "move_type",
+              "instruction"
+            ],
+            "properties": {
+              "move_type": {
+                "type": "string",
+                "enum": [
+                  "ASK_QUESTION",
+                  "PIVOT_TO_PACKAGE",
+                  "RESTATE_CRITERIA",
+                  "MAKE_CONDITIONAL",
+                  "DEFER_AND_SCHEDULE",
+                  "WALK_AWAY"
+                ]
+              },
+              "instruction": {
+                "type": "string",
+                "minLength": 20
+              },
+              "use_snippet_ids": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.schema.json#/definitions/id"
+                }
+              }
+            }
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "MESSAGE_DRAFTS",
+                "PLAN_PATCH",
+                "CHECKLIST",
+                "DECISION_LOG"
+              ]
+            }
+          },
+          "risk_notes": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rubric_ids",
+        "success_criteria",
+        "failure_modes",
+        "do_not_do"
+      ],
+      "properties": {
+        "rubric_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/definitions/id"
+          }
+        },
+        "success_criteria": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "failure_modes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "do_not_do": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 10
+          }
+        },
+        "auto_gates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "gate_id",
+              "description",
+              "condition",
+              "severity"
+            ],
+            "properties": {
+              "gate_id": {
+                "$ref": "common.schema.json#/definitions/id"
+              },
+              "description": {
+                "type": "string"
+              },
+              "condition": {
+                "$ref": "conditions.schema.json"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "BLOCK_SEND",
+                  "WARN"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "card_title": {
+          "type": "string"
+        },
+        "card_summary": {
+          "type": "string"
+        },
+        "primary_cta": {
+          "type": "string"
+        },
+        "secondary_ctas": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "icon": {
+          "type": "string"
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "year": {
+            "type": "integer"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

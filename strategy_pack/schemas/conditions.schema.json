@@ -1,0 +1,134 @@
+{
+  "$id": "https://negot.ai/schemas/conditions.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Boolean Condition Language",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "ALL",
+        "ANY",
+        "NOT",
+        "PREDICATE"
+      ]
+    },
+    "all": {
+      "type": "array",
+      "items": {
+        "$ref": "#"
+      }
+    },
+    "any": {
+      "type": "array",
+      "items": {
+        "$ref": "#"
+      }
+    },
+    "not": {
+      "$ref": "#"
+    },
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "path"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "EXISTS",
+            "EQ",
+            "NEQ",
+            "GT",
+            "GTE",
+            "LT",
+            "LTE",
+            "IN",
+            "CONTAINS",
+            "MATCHES"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "description": "JSONPointer-like path into CaseSnapshot or ExecutionContext (implementation-defined)."
+        },
+        "value": {},
+        "values": {
+          "type": "array",
+          "items": {}
+        },
+        "regex": {
+          "type": "string"
+        },
+        "min_confidence": {
+          "$ref": "common.schema.json#/definitions/confidence"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "ALL"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "all"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "ANY"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "any"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "NOT"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "not"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "PREDICATE"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "predicate"
+        ]
+      }
+    }
+  ]
+}

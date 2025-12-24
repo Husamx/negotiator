@@ -11,6 +11,7 @@ from . import (
     knowledge_graph,
     relationships,
     sessions,
+    strategies,
     templates,
     users,
 )  # noqa: F401

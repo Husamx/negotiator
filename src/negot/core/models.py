@@ -119,6 +119,11 @@ class EventType(enum.Enum):
     message_stream_started = "MESSAGE_STREAM_STARTED"
     message_stream_ended = "MESSAGE_STREAM_ENDED"
     orchestration_context_built = "ORCHESTRATION_CONTEXT_BUILT"
+    strategy_pack_loaded = "STRATEGY_PACK_LOADED"
+    strategy_selection_run = "STRATEGY_SELECTION_RUN"
+    strategy_selected = "STRATEGY_SELECTED"
+    strategy_execution_run = "STRATEGY_EXECUTION_RUN"
+    strategy_execution_completed = "STRATEGY_EXECUTION_COMPLETED"
 
 
 class TemplateProposalStatus(enum.Enum):
@@ -171,6 +176,15 @@ class Session(Base):
         back_populates="sessions",
     )
     facts: Mapped[list["Fact"]] = relationship("Fact", back_populates="session")
+    case_snapshot: Mapped[Optional["CaseSnapshot"]] = relationship(
+        "CaseSnapshot", back_populates="session", uselist=False, cascade="all, delete-orphan"
+    )
+    strategy_selections: Mapped[list["StrategySelection"]] = relationship(
+        "StrategySelection", back_populates="session", cascade="all, delete-orphan"
+    )
+    strategy_executions: Mapped[list["StrategyExecution"]] = relationship(
+        "StrategyExecution", back_populates="session", cascade="all, delete-orphan"
+    )
 
 
 class SessionEntity(Base):
@@ -198,6 +212,52 @@ class Message(Base):
     safety_flags: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     session: Mapped[Session] = relationship("Session", back_populates="messages")
+
+
+class CaseSnapshot(Base):
+    """Structured snapshot of a negotiation case for strategy selection/execution."""
+
+    __tablename__ = "case_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), nullable=False, unique=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    session: Mapped[Session] = relationship("Session", back_populates="case_snapshot")
+
+
+class StrategySelection(Base):
+    """Stores LLM strategy selection outputs for a session."""
+
+    __tablename__ = "strategy_selections"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    strategy_pack_id: Mapped[str] = mapped_column(String(length=50), nullable=False)
+    strategy_pack_version: Mapped[Optional[str]] = mapped_column(String(length=20), nullable=True)
+    selected_strategy_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    selection_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    session: Mapped[Session] = relationship("Session", back_populates="strategy_selections")
+
+
+class StrategyExecution(Base):
+    """Stores strategy execution outputs and artifacts for a session."""
+
+    __tablename__ = "strategy_executions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    strategy_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    strategy_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    inputs: Mapped[dict] = mapped_column(JSON, nullable=False)
+    artifacts: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    case_patches: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    judge_outputs: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    trace: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    session: Mapped[Session] = relationship("Session", back_populates="strategy_executions")
 
 
 class Entity(Base):

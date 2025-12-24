@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import enum
 import json
+import logging
 from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
@@ -26,10 +27,13 @@ from ..events import emit_event
 from ..models import (
     Entity,
     EventType,
+    CaseSnapshot,
     Message,
     MessageRole,
     Session,
     SessionEntity,
+    StrategyExecution,
+    StrategySelection,
     User,
     Fact,
     KnowledgeScope,
@@ -47,6 +51,13 @@ from ..schemas import (
     SessionSummary,
     SessionUpdateRequest,
 )
+from .case_snapshots import (
+    apply_case_patches,
+    get_case_snapshot,
+    get_or_create_case_snapshot,
+    update_case_snapshot_from_intake,
+    update_case_snapshot_from_message,
+)
 from .kg import attach_entities_to_session, commit_facts, compute_visible_facts, list_entities
 from .orchestrator import (
     extract_candidate_facts,
@@ -54,12 +65,22 @@ from .orchestrator import (
     run_orchestration,
 )
 from .question_planner import generate_intake_questions
+from .strategies import (
+    execute_strategy_for_session,
+    get_latest_strategy_selection,
+    get_strategy,
+    list_strategies_summary,
+    run_strategy_selection,
+)
+from .strategy_packs import validate_case_snapshot
 from .entity_proposer import propose_entities
 from .templates import create_template_proposal_for_other, select_template
 from .web_grounding import need_search, plan_queries, run_search, synthesize
 from .llm_utils import acompletion_with_retry, extract_completion_text
 
 ROLEPLAY_HISTORY_LIMIT = 12
+
+logger = logging.getLogger(__name__)
 
 
 class SessionRecapResult(BaseModel):
@@ -106,18 +127,34 @@ async def create_session(
     if template_id == "other":
         await emit_event(db, EventType.template_other_triggered, user.id, session_id=session.id, payload={"topic": req.topic_text})
         await create_template_proposal_for_other(db, user.id, session.id, req.topic_text)
-    # Build minimal intake questions based on template
+    # Create initial case snapshot for strategy selection/execution
+    case_snapshot = await get_or_create_case_snapshot(db, session, req.channel)
+    # Build minimal intake questions based on template + strategy context
     attached_entities_state = [
         {"id": entity.id, "name": entity.name, "type": entity.type}
         for entity in attached_entities
     ]
+    strategy_summaries = list_strategies_summary()
     intake_questions = await generate_intake_questions(
         topic_text=req.topic_text,
         template_id=template_id,
         counterparty_style=req.counterparty_style,
         attached_entities=attached_entities_state,
         history=[],
+        channel=case_snapshot.payload.get("channel"),
+        domain=case_snapshot.payload.get("domain"),
+        strategy_summaries=strategy_summaries,
     )
+    if not intake_questions:
+        try:
+            await run_strategy_selection(
+                db,
+                session,
+                case_snapshot.payload,
+                user_intent=req.topic_text,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Strategy selection failed after empty intake: %s", exc)
     all_entities = await list_entities(db, user.id)
     entity_payloads = [
         {
@@ -422,6 +459,7 @@ async def stream_message(
         if session.ended_at is not None:
             yield _sse_json("error", {"detail": "Session has ended"})
             return
+        case_snapshot = await get_or_create_case_snapshot(db, session, None)
         role = MessageRole.user if req.channel == "roleplay" else MessageRole.coach
         user_message = Message(
             session_id=session.id,
@@ -442,6 +480,23 @@ async def stream_message(
             session_id=session.id,
             payload={"content": req.content},
         )
+        intake_submitted = req.content.strip().startswith("Intake summary:")
+        if intake_submitted:
+            case_snapshot = await update_case_snapshot_from_intake(
+                db,
+                session,
+                questions=[],
+                answers={},
+                summary=req.content,
+            )
+        else:
+            case_snapshot = await update_case_snapshot_from_message(
+                db,
+                session,
+                case_snapshot,
+                req.content,
+                role="user",
+            )
         entity_ids = await _fetch_attached_entity_ids(db, session.id)
         candidate_facts = await extract_candidate_facts(req.content, entity_ids)
         extracted_fact_models = []
@@ -479,6 +534,23 @@ async def stream_message(
             return_empty_pack_when_skipped=False,
         )
         visible_facts = await compute_visible_facts(db, session)
+        strategy_selection = await get_latest_strategy_selection(db, session.id)
+        if intake_submitted and strategy_selection is None:
+            try:
+                strategy_selection = await run_strategy_selection(
+                    db, session, case_snapshot.payload, user_intent=req.content
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Strategy selection failed: %s", exc)
+        strategy_context = None
+        if strategy_selection:
+            try:
+                strategy_context = get_strategy(strategy_selection.selected_strategy_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Strategy context load failed: %s", exc)
+        counterparty_profile = case_snapshot.payload.get("parties", {}).get("counterpart", {})
+        counterparty_stance = counterparty_profile.get("stance")
+        counterparty_constraints = counterparty_profile.get("constraints") or []
         await emit_event(
             db,
             EventType.disclosure_in_chat,
@@ -506,6 +578,9 @@ async def stream_message(
                 history,
                 session.topic_text,
                 session.template_id,
+                strategy_context,
+                counterparty_stance,
+                counterparty_constraints,
                 include_coach=user.tier == UserTier.premium,
                 stream_roleplay=True,
             )
@@ -522,6 +597,7 @@ async def stream_message(
                     "topic_text": session.topic_text,
                     "history_count": len(history),
                     "history_limit": ROLEPLAY_HISTORY_LIMIT,
+                    "strategy_id": strategy_context.get("strategy_id") if strategy_context else None,
                 },
             )
             await emit_event(
@@ -538,6 +614,9 @@ async def stream_message(
                 session.counterparty_style,
                 history,
                 prompt_messages=prompt_messages,
+                strategy_context=strategy_context,
+                counterparty_stance=counterparty_stance,
+                counterparty_constraints=counterparty_constraints,
             ):
                 if token:
                     counterparty_chunks.append(token)
@@ -555,6 +634,13 @@ async def stream_message(
                 user.id,
                 session_id=session.id,
                 payload={"content": counterparty_message},
+            )
+            case_snapshot = await update_case_snapshot_from_message(
+                db,
+                session,
+                case_snapshot,
+                counterparty_message,
+                role="counterparty",
             )
             await emit_event(
                 db,
@@ -576,11 +662,16 @@ async def stream_message(
             }
             for f in extracted_fact_models
         ]
+        strategy_selection_payload = None
+        if strategy_selection:
+            strategy_selection_payload = dict(strategy_selection.selection_payload)
+            strategy_selection_payload["selected_strategy_id"] = strategy_selection.selected_strategy_id
         payload = {
             "counterparty_message": counterparty_message,
             "coach_panel": coach_panel,
             "grounding_pack": grounding_pack,
             "extracted_facts": extracted_facts,
+            "strategy_selection": strategy_selection_payload,
         }
         yield _sse_json("done", payload)
     except HTTPException as exc:
@@ -705,6 +796,101 @@ async def list_session_events(db: AsyncSession, user: User, session_id: int) -> 
         select(Event).where(Event.session_id == session_id).order_by(Event.created_at)
     )
     return result.scalars().all()
+
+
+async def get_case_snapshot_detail(
+    db: AsyncSession, user: User, session_id: int
+) -> CaseSnapshot:
+    """Return the current case snapshot for the session."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    snapshot = await get_case_snapshot(db, session.id)
+    if snapshot is None:
+        snapshot = await get_or_create_case_snapshot(db, session, None)
+    return snapshot
+
+
+async def submit_intake(
+    db: AsyncSession,
+    user: User,
+    session_id: int,
+    questions: List[str],
+    answers: Dict[str, str],
+    summary: Optional[str],
+) -> tuple[CaseSnapshot, Optional[StrategySelection]]:
+    """Update the case snapshot using intake answers and run strategy selection."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    snapshot = await update_case_snapshot_from_intake(db, session, questions, answers, summary)
+    existing = await get_latest_strategy_selection(db, session.id)
+    if existing is not None:
+        return snapshot, existing
+    selection = None
+    try:
+        selection = await run_strategy_selection(db, session, snapshot.payload, user_intent=summary)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Strategy selection failed after intake: %s", exc)
+    return snapshot, selection
+
+
+async def get_strategy_selection(
+    db: AsyncSession, user: User, session_id: int
+) -> Optional[StrategySelection]:
+    """Return the latest strategy selection for the session."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    return await get_latest_strategy_selection(db, session.id)
+
+
+async def run_strategy_selection_for_session(
+    db: AsyncSession,
+    user: User,
+    session_id: int,
+    user_intent: Optional[str] = None,
+) -> StrategySelection:
+    """Run strategy selection if none exists yet for the session."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    existing = await get_latest_strategy_selection(db, session.id)
+    if existing is not None:
+        return existing
+    snapshot = await get_or_create_case_snapshot(db, session, None)
+    return await run_strategy_selection(db, session, snapshot.payload, user_intent=user_intent)
+
+
+async def execute_strategy(
+    db: AsyncSession,
+    user: User,
+    session_id: int,
+    strategy_id: Optional[str],
+    inputs: Dict[str, Any],
+) -> StrategyExecution:
+    """Execute a strategy for the session and persist artifacts."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    snapshot = await get_or_create_case_snapshot(db, session, None)
+    selection = await get_latest_strategy_selection(db, session.id)
+    chosen_strategy_id = strategy_id or (selection.selected_strategy_id if selection else None)
+    if not chosen_strategy_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No strategy selected for this session.",
+        )
+    try:
+        execution = await execute_strategy_for_session(
+            db,
+            session,
+            snapshot.payload,
+            chosen_strategy_id,
+            inputs,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if execution.case_patches:
+        updated_payload = apply_case_patches(snapshot.payload, execution.case_patches)
+        updated_payload["updated_at"] = datetime.utcnow().isoformat()
+        try:
+            validate_case_snapshot(updated_payload)
+            snapshot.payload = updated_payload
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Case snapshot validation failed after strategy execution: %s", exc)
+    await db.flush()
+    return execution
 
 
 async def explicit_grounding(

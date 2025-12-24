@@ -65,9 +65,13 @@ class FactCandidate(BaseModel):
 class CreateSessionRequest(BaseModel):
     """Request payload for creating a new negotiation session."""
 
-    topic_text: str = Field(..., description="1–2 sentence description of the negotiation topic.")
+    topic_text: str = Field(..., description="1-2 sentence description of the negotiation topic.")
     counterparty_style: Optional[str] = Field(None, description="Optional style for the counterparty's persona.")
     attached_entity_ids: Optional[List[int]] = Field(None, description="IDs of pre-existing entities to attach to the session.")
+    channel: Optional[str] = Field(
+        "DM",
+        description="Negotiation channel (EMAIL, DM, IN_PERSON_NOTES).",
+    )
 
 
 class CreateSessionResponse(BaseModel):
@@ -95,6 +99,7 @@ class PostMessageResponse(BaseModel):
     coach_panel: Optional[dict] = Field(None, description="Premium coach suggestions, if applicable.")
     grounding_pack: Optional[dict] = Field(None, description="Web grounding context pack, if used.")
     extracted_facts: List[FactCandidate] = Field([], description="Facts extracted from the user's message (session-only).")
+    strategy_selection: Optional[dict] = Field(None, description="Latest strategy selection payload, if available.")
 
 
 class EndSessionResponse(BaseModel):
@@ -168,6 +173,85 @@ class SessionDetail(BaseModel):
     ended_at: Optional[datetime] = None
     attached_entities: List[EntityOut] = []
     messages: List[SessionMessageOut] = []
+
+
+class CaseSnapshotOut(BaseModel):
+    """Response model for a case snapshot."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    session_id: int
+    payload: dict
+    created_at: datetime
+    updated_at: datetime
+
+
+class CaseSnapshotUpdateRequest(BaseModel):
+    """Request to apply JSON patch updates to the case snapshot."""
+
+    patches: List[dict] = Field(..., description="RFC6902 JSON patch operations.")
+
+
+class IntakeSubmitRequest(BaseModel):
+    """Submit intake questions + answers to update the case snapshot."""
+
+    questions: List[str] = Field(default_factory=list)
+    answers: dict = Field(default_factory=dict)
+    summary: Optional[str] = Field(None, description="Optional prebuilt intake summary.")
+
+
+class IntakeSubmitResponse(BaseModel):
+    """Response after applying intake updates."""
+
+    case_snapshot: CaseSnapshotOut
+    strategy_selection: Optional[dict] = None
+
+
+class StrategySummary(BaseModel):
+    """Summary model for listing strategies."""
+
+    strategy_id: str
+    name: str
+    summary: str
+    category: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    revision: Optional[int] = None
+
+
+class StrategySelectionOut(BaseModel):
+    """Latest strategy selection output for a session."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    selected_strategy_id: str
+    selection_payload: dict
+    strategy_pack_id: str
+    strategy_pack_version: Optional[str] = None
+    created_at: datetime
+
+
+class StrategyExecutionRequest(BaseModel):
+    """Execute a strategy with optional inputs."""
+
+    strategy_id: Optional[str] = None
+    inputs: dict = Field(default_factory=dict)
+
+
+class StrategyExecutionOut(BaseModel):
+    """Response model for a strategy execution."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    session_id: int
+    strategy_id: str
+    strategy_revision: int
+    inputs: dict
+    artifacts: List[dict]
+    case_patches: List[dict]
+    judge_outputs: List[dict]
+    trace: dict
+    created_at: datetime
 
 
 class SessionUpdateRequest(BaseModel):

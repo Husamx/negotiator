@@ -1,0 +1,137 @@
+{
+  "$id": "https://negot.ai/schemas/strategy_pack.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Pack",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pack_id",
+    "pack_name",
+    "pack_version",
+    "schema_version",
+    "taxonomy_version",
+    "strategies",
+    "rubrics"
+  ],
+  "properties": {
+    "pack_id": {
+      "$ref": "common.schema.json#/definitions/id"
+    },
+    "pack_name": {
+      "type": "string",
+      "minLength": 3
+    },
+    "pack_version": {
+      "$ref": "common.schema.json#/definitions/semver"
+    },
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "2025-12-v1"
+      ]
+    },
+    "taxonomy_version": {
+      "type": "string",
+      "enum": [
+        "taxonomy-2025-12-v1"
+      ]
+    },
+    "description": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_app_version"
+      ],
+      "properties": {
+        "min_app_version": {
+          "$ref": "common.schema.json#/definitions/semver"
+        },
+        "max_app_version": {
+          "$ref": "common.schema.json#/definitions/semver"
+        }
+      }
+    },
+    "domains": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "GENERAL",
+          "RENT_HOUSING",
+          "PROCUREMENT_VENDOR",
+          "JOB_OFFER_COMP",
+          "SERVICES_CONTRACTOR",
+          "PERSONAL_FAMILY"
+        ]
+      },
+      "default": [
+        "GENERAL"
+      ]
+    },
+    "strategies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "strategy_id",
+          "path"
+        ],
+        "properties": {
+          "strategy_id": {
+            "$ref": "common.schema.json#/definitions/id"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^(strategies\\/).+\\.json$"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    "rubrics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rubric_id",
+          "path"
+        ],
+        "properties": {
+          "rubric_id": {
+            "$ref": "common.schema.json#/definitions/id"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^(rubrics\\/).+\\.json$"
+          }
+        }
+      }
+    },
+    "locales": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z]{2}-[A-Z]{2}$"
+      },
+      "default": [
+        "en-GB"
+      ]
+    },
+    "license_notice": {
+      "type": "string"
+    }
+  }
+}

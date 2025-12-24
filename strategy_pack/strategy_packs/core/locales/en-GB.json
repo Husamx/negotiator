@@ -1,0 +1,27 @@
+{
+  "taxonomy": {
+    "categories": {
+      "SETUP": "Setup",
+      "INFORMATION": "Information",
+      "VALUE_CREATE": "Create value",
+      "VALUE_CLAIM": "Claim value",
+      "COMMUNICATION": "Communication",
+      "DEADLOCK": "Deadlock & resistance",
+      "MULTI_PARTY": "Multi-party",
+      "RISK_CONTROL": "Risk control"
+    },
+    "channels": {
+      "EMAIL": "Email",
+      "DM": "Direct message",
+      "IN_PERSON_NOTES": "In-person notes"
+    },
+    "domains": {
+      "GENERAL": "General",
+      "RENT_HOUSING": "Rent & housing",
+      "PROCUREMENT_VENDOR": "Procurement & vendors",
+      "JOB_OFFER_COMP": "Job offers & compensation",
+      "SERVICES_CONTRACTOR": "Services & contractors",
+      "PERSONAL_FAMILY": "Personal & family"
+    }
+  }
+}

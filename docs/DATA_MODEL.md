@@ -37,6 +37,30 @@ Defines persistence for:
 - llm_provider / llm_model / prompt_version (optional)
 - token usage + safety flags (optional)
 
+### 1.5 case_snapshots
+- case_snapshot_id (PK)
+- session_id (FK, unique)
+- payload_json (CaseSnapshot schema)
+- created_at, updated_at
+
+### 1.6 strategy_selections
+- strategy_selection_id (PK)
+- session_id (FK)
+- strategy_pack_id / strategy_pack_version
+- selected_strategy_id
+- selection_payload_json (ranked strategies)
+- created_at
+
+### 1.7 strategy_executions
+- strategy_execution_id (PK)
+- session_id (FK)
+- strategy_id / strategy_revision
+- inputs_json
+- artifacts_json
+- case_patches_json
+- judge_outputs_json
+- trace_json
+- created_at
 ## 2. World graph tables
 
 ### 2.1 entities

@@ -1,0 +1,191 @@
+{
+  "strategy_id": "STRAT_BRACKET_RANGE",
+  "revision": 1,
+  "name": "Bracket strategically",
+  "category": "VALUE_CLAIM",
+  "subcategories": [],
+  "tags": [
+    "BRACKETING",
+    "ANCHORING",
+    "EMAIL",
+    "DM"
+  ],
+  "summary": "Use ranges (brackets) to guide the midpoint toward your target while preserving flexibility and reducing confrontation.",
+  "goal": "Improve outcomes by shaping expectations without committing to a single point too early.",
+  "counterparty_guidance": [
+    "Do not split the difference automatically; ask which end is real.",
+    "Counter with your own bracket or a single number tied to criteria.",
+    "Use the range to surface priorities, then narrow the scope.",
+    "Avoid anchoring inside a range that disadvantages you."
+  ],
+  "rationale": "",
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ],
+    "channels": [
+      "EMAIL",
+      "DM",
+      "IN_PERSON_NOTES"
+    ],
+    "when_to_use": [
+      "Use when you need a structured move to progress the negotiation."
+    ],
+    "when_not_to_use": [
+      "Avoid when facts are missing and you need intake/clarification first."
+    ],
+    "prerequisites": [
+      {
+        "id": "PREREQ_HAS_OBJECTIVES",
+        "description": "Case objectives exist (target/acceptable/walk-away).",
+        "condition": {
+          "type": "PREDICATE",
+          "predicate": {
+            "op": "EXISTS",
+            "path": "/objectives/target"
+          }
+        },
+        "severity": "WARNING",
+        "remediation": "Fill target/acceptable/walk-away in the Strategy Canvas."
+      }
+    ]
+  },
+  "inputs": [
+    {
+      "key": "range_low",
+      "label": "Range low end",
+      "type": "STRING",
+      "required": true,
+      "help": "Lower end of the range you present."
+    },
+    {
+      "key": "range_high",
+      "label": "Range high end",
+      "type": "STRING",
+      "required": true,
+      "help": "Upper end of the range you present."
+    },
+    {
+      "key": "midpoint_intent",
+      "label": "What midpoint you want",
+      "type": "STRING",
+      "required": false,
+      "help": "Optional: what you want the midpoint to land on."
+    }
+  ],
+  "steps": [
+    {
+      "step_id": "STEP_VALIDATE",
+      "title": "Validate context and prerequisites",
+      "instruction": "Validate prerequisites, restate the intended move, and identify missing info that would improve execution.",
+      "agent_actions": [
+        {
+          "action": "Load case snapshot",
+          "tool": "RETRIEVE_CASE",
+          "output_key": "case"
+        }
+      ],
+      "outputs": [
+        "PLAN_PATCH"
+      ],
+      "notes": "If blockers exist, return remediation instead of artifacts."
+    },
+    {
+      "step_id": "STEP_EXECUTE",
+      "title": "Execute the strategy",
+      "instruction": "Generate the required artifacts (drafts, packages, checklist) and run critique rubrics before presenting to the user.",
+      "agent_actions": [
+        {
+          "action": "Generate message drafts",
+          "tool": "GENERATE_MESSAGE_DRAFTS",
+          "output_key": "drafts"
+        },
+        {
+          "action": "Critique drafts",
+          "tool": "CRITIQUE_MESSAGE",
+          "output_key": "judge"
+        }
+      ],
+      "outputs": [
+        "MESSAGE_DRAFTS",
+        "DECISION_LOG"
+      ]
+    }
+  ],
+  "scripts": {
+    "snippets": [],
+    "templates": []
+  },
+  "branches": [
+    {
+      "branch_id": "BRANCH_THEY_PICK_LOW_END",
+      "label": "They try to accept only the low end",
+      "trigger": {
+        "type": "PREDICATE",
+        "predicate": {
+          "op": "CONTAINS",
+          "path": "/timeline/recent_events/0/raw_text",
+          "value": "lower"
+        }
+      },
+      "recommended_move": {
+        "move_type": "RESTATE_CRITERIA",
+        "instruction": "Clarify that the range indicates a zone for discussion, then ask which objective criteria they are using to justify choosing the low end."
+      },
+      "outputs": [
+        "MESSAGE_DRAFTS",
+        "CHECKLIST"
+      ],
+      "risk_notes": "Avoid arguing; move to criteria and trade-offs."
+    }
+  ],
+  "evaluation": {
+    "rubric_ids": [
+      "RUBRIC_MESSAGE_QUALITY",
+      "RUBRIC_NEGOTIATION_SAFETY"
+    ],
+    "success_criteria": [
+      "Move is explicit and progresses the negotiation.",
+      "Message includes a next step or calibrated question."
+    ],
+    "failure_modes": [
+      "Vague ask.",
+      "Unnecessary disclosure of urgency or bottom line."
+    ],
+    "do_not_do": [
+      "Do not fabricate facts.",
+      "Do not reveal your bottom line unless intentionally walking away."
+    ],
+    "auto_gates": [
+      {
+        "gate_id": "GATE_BOTTOM_LINE_LANGUAGE",
+        "description": "Warn or block if explicit bottom line language is present.",
+        "condition": {
+          "type": "PREDICATE",
+          "predicate": {
+            "op": "MATCHES",
+            "path": "/execution_context/draft_text",
+            "regex": "(minimum|bottom line|final offer)"
+          }
+        },
+        "severity": "WARN"
+      }
+    ]
+  },
+  "ui": {
+    "card_title": "Bracket strategically",
+    "card_summary": "Use ranges (brackets) to guide the midpoint toward your target while preserving flexibility and reducing confrontation.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "references": []
+}

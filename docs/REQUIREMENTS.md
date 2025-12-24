@@ -122,6 +122,15 @@ Triggers:
 TemplateDraft: usable immediately for that user, marked `draft=true`.
 TemplateProposal: queued for human review before becoming official.
 
+### 4.5 Strategy system (selection + execution)
+- Strategies are auto-selected; users are never asked to pick a strategy.
+- Intake questions must gather signals that help differentiate strategies.
+- Selection is LLM-based using the CaseSnapshot plus strategy summaries.
+- Selection runs once immediately after intake and persists for the session.
+- The selected strategy must guide roleplay and coaching without being revealed to the user.
+- Strategy execution generates artifacts (message drafts, checklists, packages) and rubric critiques.
+- Deterministic gates must block unsafe drafts (bottom-line leaks, fabricated benchmarks).
+
 ## 5. UX requirements
 
 ### 5.1 Design
@@ -137,7 +146,7 @@ TemplateProposal: queued for human review before becoming official.
 5) (Internal) Admin review tool
 
 ### 5.3 New Session wizard
-Step 1: Topic (text or voice-to-text; 1–2 sentences)
+Step 1: Topic (text or voice-to-text; 1-2 sentences) + channel
 Step 2: Entities (attach existing or create new)
 Step 3: Minimal questions (≤ 7 typical; skip logic)
 
@@ -146,6 +155,7 @@ Always:
 - transcript + composer
 - entity tray (attached entities)
 - counterparty style selector: Polite / Neutral / Tough / Busy / Defensive
+- strategy controls embedded in chat (selected strategy + run execution)
 
 Standard:
 - role play only
@@ -167,6 +177,7 @@ Premium:
 - Stay in character as counterparty; consistent persona.
 - Respect visibility: must not access facts counterparty does not know.
 - Must not output advice/critique (especially Standard).
+- Use selected strategy context to shape responses without revealing it.
 
 ### 6.2 Style variants
 - Polite / Neutral / Tough / Busy / Defensive

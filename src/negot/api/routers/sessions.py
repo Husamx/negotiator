@@ -7,17 +7,20 @@ contract outline.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Path
+from fastapi import APIRouter, HTTPException, Path
 from fastapi.responses import StreamingResponse
 
 from ..dependencies import CurrentUser, DatabaseSession
 from ...core.services import sessions as sessions_service
 from ...core.schemas import (
+    CaseSnapshotOut,
     CreateSessionRequest,
     CreateSessionResponse,
     EndSessionResponse,
     GroundingRequest,
     GroundingResponse,
+    IntakeSubmitRequest,
+    IntakeSubmitResponse,
     MemoryReviewRequest,
     MemoryReviewResponse,
     PostMessageRequest,
@@ -27,6 +30,9 @@ from ...core.schemas import (
     SessionSummary,
     SessionUpdateRequest,
     FactOut,
+    StrategyExecutionOut,
+    StrategyExecutionRequest,
+    StrategySelectionOut,
 )
 
 
@@ -131,6 +137,99 @@ async def list_session_events(
     """List events for debugging and orchestration tracing."""
     events = await sessions_service.list_session_events(db, user, session_id)
     return [SessionEventOut.model_validate(event) for event in events]
+
+
+@router.get("/{session_id}/case-snapshot", response_model=CaseSnapshotOut)
+async def get_case_snapshot(
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+) -> CaseSnapshotOut:
+    """Get the current case snapshot for the session."""
+    snapshot = await sessions_service.get_case_snapshot_detail(db, user, session_id)
+    return CaseSnapshotOut.model_validate(snapshot)
+
+
+@router.post("/{session_id}/intake", response_model=IntakeSubmitResponse)
+async def submit_intake(
+    req: IntakeSubmitRequest,
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+) -> IntakeSubmitResponse:
+    """Apply intake answers to the case snapshot and run strategy selection."""
+    snapshot, selection = await sessions_service.submit_intake(
+        db,
+        user,
+        session_id,
+        req.questions,
+        req.answers,
+        req.summary,
+    )
+    selection_payload = None
+    if selection:
+        selection_payload = dict(selection.selection_payload)
+        selection_payload["selected_strategy_id"] = selection.selected_strategy_id
+    return IntakeSubmitResponse(
+        case_snapshot=CaseSnapshotOut.model_validate(snapshot),
+        strategy_selection=selection_payload,
+    )
+
+
+@router.get("/{session_id}/strategy/selection", response_model=StrategySelectionOut)
+async def get_strategy_selection(
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+) -> StrategySelectionOut:
+    """Get the latest strategy selection output for the session."""
+    selection = await sessions_service.get_strategy_selection(db, user, session_id)
+    if selection is None:
+        raise HTTPException(status_code=404, detail="Strategy selection not found.")
+    return StrategySelectionOut(
+        selected_strategy_id=selection.selected_strategy_id,
+        selection_payload=selection.selection_payload,
+        strategy_pack_id=selection.strategy_pack_id,
+        strategy_pack_version=selection.strategy_pack_version,
+        created_at=selection.created_at,
+    )
+
+
+@router.post("/{session_id}/strategy/selection", response_model=StrategySelectionOut)
+async def run_strategy_selection(
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+) -> StrategySelectionOut:
+    """Ensure a strategy selection exists for the session."""
+    selection = await sessions_service.run_strategy_selection_for_session(
+        db, user, session_id, user_intent=None
+    )
+    return StrategySelectionOut(
+        selected_strategy_id=selection.selected_strategy_id,
+        selection_payload=selection.selection_payload,
+        strategy_pack_id=selection.strategy_pack_id,
+        strategy_pack_version=selection.strategy_pack_version,
+        created_at=selection.created_at,
+    )
+
+
+@router.post("/{session_id}/strategy/execute", response_model=StrategyExecutionOut)
+async def execute_strategy(
+    req: StrategyExecutionRequest,
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+) -> StrategyExecutionOut:
+    """Execute the selected (or provided) strategy."""
+    execution = await sessions_service.execute_strategy(
+        db,
+        user,
+        session_id,
+        req.strategy_id,
+        req.inputs,
+    )
+    return StrategyExecutionOut.model_validate(execution)
 
 
 @router.post("/{session_id}/end", response_model=EndSessionResponse)

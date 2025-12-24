@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 MAX_INTAKE_QUESTIONS = 5
 DEFAULT_INTAKE_GOAL = (
     "Collect only the critical unknowns needed to start realistic roleplay, "
-    "maximize realism, and minimize the number of questions."
+    "maximize realism, and minimize the number of questions. "
+    "Prioritize counterparty stance, constraints, and key deal terms."
 )
 
 INTAKE_QUESTION_SYSTEM_PROMPT = """You are the Intake Question Agent.
@@ -31,6 +32,7 @@ Treat this as a reinforcement learning decision:
 Constraints:
 - Ask 0 to 5 questions, as few as possible.
 - Ask only what is necessary to start roleplay; do not coach or advise.
+- Ask questions that help identify the best negotiation strategy without naming strategies.
 - Use only the provided state; unknown stays unknown.
 - Output JSON only: {"questions": ["..."]}.
 """
@@ -67,6 +69,9 @@ def _build_state_payload(
     counterparty_style: Optional[str],
     attached_entities: Sequence[Dict[str, Any]],
     history: Optional[List[Dict[str, str]]],
+    channel: Optional[str],
+    domain: Optional[str],
+    strategy_summaries: Optional[Sequence[Dict[str, Any]]],
 ) -> Dict[str, Any]:
     return {
         "topic_text": topic_text,
@@ -74,6 +79,9 @@ def _build_state_payload(
         "counterparty_style": counterparty_style,
         "attached_entities": list(attached_entities),
         "history": history or [],
+        "channel": channel,
+        "domain": domain,
+        "strategy_summaries": list(strategy_summaries or []),
     }
 
 
@@ -85,6 +93,9 @@ async def generate_intake_questions(
     attached_entities: Optional[Sequence[Dict[str, Any]]] = None,
     history: Optional[List[Dict[str, str]]] = None,
     goal: Optional[str] = None,
+    channel: Optional[str] = None,
+    domain: Optional[str] = None,
+    strategy_summaries: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> List[str]:
     """Plan minimal intake questions using an LLM agent."""
     settings = get_settings()
@@ -96,6 +107,9 @@ async def generate_intake_questions(
         counterparty_style,
         attached_entities or [],
         history,
+        channel,
+        domain,
+        strategy_summaries,
     )
     payload = {"state": state, "goal": goal or DEFAULT_INTAKE_GOAL}
     messages = [

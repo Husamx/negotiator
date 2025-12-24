@@ -1,0 +1,81 @@
+{
+  "$id": "https://negot.ai/schemas/rubric.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evaluation Rubric",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rubric_id",
+    "name",
+    "scale",
+    "dimensions"
+  ],
+  "properties": {
+    "rubric_id": {
+      "$ref": "common.schema.json#/definitions/id"
+    },
+    "name": {
+      "type": "string"
+    },
+    "scale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min",
+        "max"
+      ],
+      "properties": {
+        "min": {
+          "type": "integer"
+        },
+        "max": {
+          "type": "integer"
+        }
+      }
+    },
+    "dimensions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dimension_id",
+          "label",
+          "description",
+          "anchors"
+        ],
+        "properties": {
+          "dimension_id": {
+            "$ref": "common.schema.json#/definitions/id"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "anchors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "score",
+                "meaning"
+              ],
+              "properties": {
+                "score": {
+                  "type": "integer"
+                },
+                "meaning": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

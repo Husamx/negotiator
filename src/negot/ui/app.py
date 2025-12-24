@@ -11,6 +11,7 @@ import streamlit as st
 
 
 API_BASE_URL = "http://localhost:8000"
+AUTO_START_ROLEPLAY_MESSAGE = "Let's begin the roleplay."
 
 
 def _headers(user_id: str) -> Dict[str, str]:
@@ -82,6 +83,7 @@ def _ensure_user_state() -> None:
         st.session_state.new_session = {
             "topic_text": "",
             "counterparty_style": "neutral",
+            "channel": "DM",
             "entity_ids": [],
             "questions": [],
             "answers": {},
@@ -98,10 +100,16 @@ def _ensure_user_state() -> None:
         st.session_state.intake_session_id = None
     if "intake_summary" not in st.session_state:
         st.session_state.intake_summary = None
+    if "intake_autostart_pending" not in st.session_state:
+        st.session_state.intake_autostart_pending = False
     if "allow_web_grounding" not in st.session_state:
         st.session_state.allow_web_grounding = True
     if "session_recap" not in st.session_state:
         st.session_state.session_recap = None
+    if "strategy_selection" not in st.session_state:
+        st.session_state.strategy_selection = None
+    if "strategy_execution" not in st.session_state:
+        st.session_state.strategy_execution = None
 
 
 def _load_user_profile() -> None:
@@ -144,6 +152,7 @@ def _reset_new_session() -> None:
     st.session_state.new_session = {
         "topic_text": "",
         "counterparty_style": "neutral",
+        "channel": "DM",
         "entity_ids": [],
         "questions": [],
         "answers": {},
@@ -194,6 +203,11 @@ def _attribute_rows(state_key: str, initial: Optional[dict] = None) -> Dict[str,
     return attrs
 
 
+def _list_input(label: str, state_key: str, help_text: Optional[str] = None) -> List[str]:
+    raw = st.text_area(label, key=state_key, help=help_text)
+    return [line.strip() for line in raw.splitlines() if line.strip()]
+
+
 def _build_intake_summary(
     topic_text: str,
     template_id: Optional[str],
@@ -234,6 +248,8 @@ def _set_active_session(session_id: int) -> None:
     st.session_state.session_id = session_id
     st.session_state.messages = _load_session_history(session_id)
     st.session_state.session_recap = None
+    st.session_state.strategy_selection = None
+    st.session_state.strategy_execution = None
 
 
 def _stream_roleplay_message(
@@ -360,8 +376,17 @@ def _render_new_session_panel() -> None:
             ),
             key="new_session_style_select",
         )
+        channel = st.selectbox(
+            "Channel",
+            options=["EMAIL", "DM", "IN_PERSON_NOTES"],
+            index=["EMAIL", "DM", "IN_PERSON_NOTES"].index(
+                st.session_state.new_session.get("channel", "DM")
+            ),
+            key="new_session_channel_select",
+        )
         st.session_state.new_session["topic_text"] = topic
         st.session_state.new_session["counterparty_style"] = style
+        st.session_state.new_session["channel"] = channel
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Reset", key="new_session_reset_step1"):
@@ -440,6 +465,7 @@ def _render_new_session_panel() -> None:
             "topic_text": st.session_state.new_session["topic_text"],
             "counterparty_style": st.session_state.new_session["counterparty_style"],
             "attached_entity_ids": st.session_state.new_session["entity_ids"],
+            "channel": st.session_state.new_session.get("channel", "DM"),
         }
         col1, col2 = st.columns(2)
         with col1:
@@ -524,6 +550,25 @@ def _render_session_controls(session_data: Dict[str, Any]) -> None:
             )
 
 
+def _render_session_event_log(session_id: int) -> None:
+    with st.expander("Orchestration log", expanded=False):
+        resp = _api_get(f"/sessions/{session_id}/events", st.session_state.user_id)
+        if resp.status_code != 200:
+            st.error("Failed to load event log.")
+            return
+        events = resp.json()
+        if not events:
+            st.caption("No events yet.")
+            return
+        for event in events[-50:]:
+            event_type = event.get("event_type", "UNKNOWN")
+            created_at = event.get("created_at", "")
+            st.markdown(f"**{event_type}** · {created_at}")
+            payload = event.get("payload") or {}
+            if payload:
+                st.json(payload)
+
+
 def _render_chat_panel() -> None:
     st.markdown("### Chat")
     session_id = st.session_state.session_id
@@ -542,6 +587,22 @@ def _render_chat_panel() -> None:
     st.caption(
         f"Template: {session_data.get('template_id')} | Style: {session_data.get('counterparty_style') or 'neutral'}"
     )
+    selection_data = st.session_state.strategy_selection
+    if not selection_data:
+        selection_resp = _api_get(
+            f"/sessions/{session_id}/strategy/selection", st.session_state.user_id
+        )
+        if selection_resp.status_code == 200:
+            record = selection_resp.json()
+            selection_data = record.get("selection_payload") or {}
+            selection_data["selected_strategy_id"] = record.get("selected_strategy_id")
+            st.session_state.strategy_selection = selection_data
+    if selection_data:
+        selected_id = selection_data.get("selected_strategy_id")
+        if selected_id:
+            st.caption(f"Active strategy: {selected_id}")
+    with st.expander("Strategy", expanded=False):
+        _render_strategy_panel(show_header=False)
     _render_session_controls(session_data)
     col1, col2 = st.columns(2)
     with col1:
@@ -596,7 +657,25 @@ def _render_chat_panel() -> None:
                         intake_questions,
                         answers,
                     )
+                    intake_payload = {
+                        "questions": intake_questions,
+                        "answers": answers,
+                        "summary": st.session_state.intake_summary,
+                    }
+                    intake_resp = _api_post(
+                        f"/sessions/{session_id}/intake",
+                        st.session_state.user_id,
+                        intake_payload,
+                    )
+                    if intake_resp.status_code == 200:
+                        intake_data = intake_resp.json()
+                        st.session_state.strategy_selection = intake_data.get(
+                            "strategy_selection"
+                        )
+                    else:
+                        st.error(intake_resp.text)
                     st.session_state.intake_queue = []
+                    st.session_state.intake_autostart_pending = True
                 st.rerun()
         return
     if (
@@ -616,7 +695,17 @@ def _render_chat_panel() -> None:
                 with st.expander("Grounding Pack", expanded=False):
                     st.json(message["grounding_pack"])
     prompt = st.chat_input("Send a message")
+    if (
+        not prompt
+        and st.session_state.intake_autostart_pending
+        and st.session_state.intake_summary
+        and st.session_state.intake_session_id == session_id
+        and not st.session_state.messages
+    ):
+        prompt = AUTO_START_ROLEPLAY_MESSAGE
     if prompt:
+        if st.session_state.intake_autostart_pending:
+            st.session_state.intake_autostart_pending = False
         outbound = prompt
         if st.session_state.intake_summary:
             outbound = f"{st.session_state.intake_summary}\n\nUser message: {prompt}"
@@ -642,6 +731,8 @@ def _render_chat_panel() -> None:
             if payload.get("grounding_pack"):
                 with st.expander("Grounding Pack", expanded=False):
                     st.json(payload["grounding_pack"])
+            if payload.get("strategy_selection"):
+                st.session_state.strategy_selection = payload["strategy_selection"]
         st.session_state.messages.append(
             {
                 "role": "assistant",
@@ -650,6 +741,7 @@ def _render_chat_panel() -> None:
                 "grounding_pack": payload.get("grounding_pack"),
             }
         )
+    _render_session_event_log(session_id)
 
 
 def _render_memory_review_panel() -> None:
@@ -753,6 +845,95 @@ def _render_orchestration_panel() -> None:
             st.write(content)
     with st.expander("Raw prompt payload", expanded=False):
         st.json(payload)
+
+
+def _render_strategy_panel(show_header: bool = True) -> None:
+    if show_header:
+        st.markdown("### Strategy")
+    session_id = st.session_state.session_id
+    if not session_id:
+        st.info("Select a session to view strategies.")
+        return
+    selection = st.session_state.strategy_selection
+    if not selection:
+        resp = _api_get(f"/sessions/{session_id}/strategy/selection", st.session_state.user_id)
+        if resp.status_code == 200:
+            record = resp.json()
+            selection = record.get("selection_payload") or {}
+            selection["selected_strategy_id"] = record.get("selected_strategy_id")
+            st.session_state.strategy_selection = selection
+        else:
+            selection = None
+    if not selection:
+        st.info("No strategy selected yet.")
+        return
+    selected_id = selection.get("selected_strategy_id")
+    ranked = selection.get("response", {}).get("ranked_strategies", [])
+    if not selected_id and ranked:
+        selected_id = ranked[0].get("strategy_id")
+    if not selected_id:
+        st.info("Strategy selection is incomplete.")
+        return
+    st.caption(f"Selected strategy: {selected_id}")
+    strat_resp = _api_get(f"/strategies/{selected_id}", st.session_state.user_id)
+    if strat_resp.status_code != 200:
+        st.error("Failed to load strategy details.")
+        return
+    strategy = strat_resp.json()
+    st.markdown(f"**{strategy.get('name')}**")
+    if strategy.get("summary"):
+        st.caption(strategy.get("summary"))
+    if strategy.get("goal"):
+        st.caption(f"Goal: {strategy.get('goal')}")
+    if ranked:
+        with st.expander("Ranking details", expanded=False):
+            st.json(ranked)
+    inputs_payload: Dict[str, Any] = {}
+    for input_def in strategy.get("inputs", []):
+        key = input_def.get("key")
+        if not key:
+            continue
+        label = input_def.get("label") or key
+        help_text = input_def.get("help")
+        input_type = input_def.get("type")
+        state_key = f"strategy_input_{session_id}_{key}"
+        default_val = input_def.get("default")
+        if input_type == "STRING":
+            value = st.text_input(label, value=str(default_val or ""), key=state_key, help=help_text)
+        elif input_type == "NUMBER":
+            value = st.number_input(label, value=float(default_val or 0), key=state_key, help=help_text)
+        elif input_type == "BOOLEAN":
+            value = st.checkbox(label, value=bool(default_val) if default_val is not None else False, key=state_key)
+        elif input_type == "MONEY":
+            amount_key = f"{state_key}_amount"
+            currency_key = f"{state_key}_currency"
+            amount = st.number_input(f"{label} amount", value=0.0, key=amount_key)
+            currency = st.text_input(f"{label} currency", value="USD", key=currency_key)
+            value = {"amount": amount, "currency": currency}
+        elif input_type == "ENUM":
+            enum_values = input_def.get("enum_values") or []
+            if enum_values:
+                value = st.selectbox(label, options=enum_values, key=state_key)
+            else:
+                value = st.text_input(label, value=str(default_val or ""), key=state_key, help=help_text)
+        elif input_type in {"STRING_LIST", "ISSUE_LIST", "PACKAGE_LIST"}:
+            value = _list_input(label, state_key, help_text=help_text)
+        else:
+            value = st.text_input(label, value=str(default_val or ""), key=state_key, help=help_text)
+        inputs_payload[key] = value
+    if st.button("Execute strategy", type="primary", key=f"execute_strategy_{session_id}"):
+        resp = _api_post(
+            f"/sessions/{session_id}/strategy/execute",
+            st.session_state.user_id,
+            {"strategy_id": selected_id, "inputs": inputs_payload},
+        )
+        if resp.status_code == 200:
+            st.session_state.strategy_execution = resp.json()
+        else:
+            st.error(resp.text)
+    if st.session_state.strategy_execution:
+        with st.expander("Execution output", expanded=True):
+            st.json(st.session_state.strategy_execution)
 
 
 def _render_kg_manager_panel() -> None:
