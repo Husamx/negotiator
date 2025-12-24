@@ -16,6 +16,8 @@ from ...core.schemas import (
     CaseSnapshotOut,
     CreateSessionRequest,
     CreateSessionResponse,
+    BranchCopyRequest,
+    BranchUpdateRequest,
     EndSessionResponse,
     GroundingRequest,
     GroundingResponse,
@@ -24,6 +26,8 @@ from ...core.schemas import (
     MemoryReviewRequest,
     MemoryReviewResponse,
     PostMessageRequest,
+    RouteBranchOut,
+    RouteGenerateRequest,
     SessionAttachRequest,
     SessionDetail,
     SessionEventOut,
@@ -265,4 +269,100 @@ async def explicit_grounding(
         db, user, session_id, req
     )
     return GroundingResponse(grounding_pack=grounding_pack, sources=sources, budget_spent=budget)
+
+
+@router.get("/{session_id}/routes", response_model=list[RouteBranchOut])
+async def list_routes(
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+    parent_message_id: int | None = None,
+) -> list[RouteBranchOut]:
+    """List generated route branches for a session."""
+    branches = await sessions_service.list_route_branches(
+        db, user, session_id, parent_message_id=parent_message_id
+    )
+    return [RouteBranchOut(**branch) for branch in branches]
+
+
+@router.post("/{session_id}/routes/generate", response_model=RouteBranchOut)
+async def generate_route(
+    req: RouteGenerateRequest,
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+) -> RouteBranchOut:
+    """Generate a single route branch."""
+    branch = await sessions_service.generate_route(
+        db,
+        user,
+        session_id,
+        variant=req.variant,
+        existing_routes=req.existing_routes,
+        parent_message_id=req.parent_message_id,
+    )
+    return RouteBranchOut(**branch)
+
+
+@router.patch("/{session_id}/threads/{thread_id}", response_model=RouteBranchOut)
+async def update_branch(
+    req: BranchUpdateRequest,
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+    thread_id: int = Path(..., description="Branch thread identifier."),
+) -> RouteBranchOut:
+    """Update a branch label or response."""
+    branch = await sessions_service.update_branch(
+        db,
+        user,
+        session_id,
+        thread_id,
+        branch_label=req.branch_label,
+        counterparty_response=req.counterparty_response,
+    )
+    return RouteBranchOut(**branch)
+
+
+@router.post("/{session_id}/threads/{thread_id}/copy", response_model=RouteBranchOut)
+async def copy_branch(
+    req: BranchCopyRequest,
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+    thread_id: int = Path(..., description="Branch thread identifier to copy."),
+) -> RouteBranchOut:
+    """Copy a branch into a new branch thread."""
+    branch = await sessions_service.copy_branch(
+        db,
+        user,
+        session_id,
+        thread_id,
+        branch_label=req.branch_label,
+        counterparty_response=req.counterparty_response,
+    )
+    return RouteBranchOut(**branch)
+
+
+@router.delete("/{session_id}/threads/{thread_id}", status_code=204)
+async def delete_branch(
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+    thread_id: int = Path(..., description="Branch thread identifier to delete."),
+) -> None:
+    """Delete a branch thread."""
+    await sessions_service.delete_branch(db, user, session_id, thread_id)
+    return None
+
+
+@router.post("/{session_id}/threads/{thread_id}/activate", response_model=SessionDetail)
+async def activate_thread(
+    db: DatabaseSession,
+    user: CurrentUser,
+    session_id: int = Path(..., description="Identifier of the session."),
+    thread_id: int = Path(..., description="Thread identifier to activate."),
+) -> SessionDetail:
+    """Activate a branch thread as the mainline path."""
+    return await sessions_service.activate_thread(db, user, session_id, thread_id)
 

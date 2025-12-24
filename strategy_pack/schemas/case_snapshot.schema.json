@@ -181,10 +181,16 @@
           "my_position": {},
           "their_position": {},
           "my_interest": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "their_interest": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }
@@ -387,6 +393,74 @@
           "notes": {
             "type": "string"
           }
+        }
+      }
+    },
+    "route_branches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "branch_id",
+          "parent_message_id",
+          "variant",
+          "counterparty_response",
+          "rationale",
+          "created_at"
+        ],
+        "properties": {
+          "branch_id": {
+            "$ref": "common.schema.json#/definitions/id"
+          },
+          "parent_message_id": {
+            "type": "integer"
+          },
+          "variant": {
+            "type": "string",
+            "enum": [
+              "LIKELY",
+              "RISK",
+              "BEST",
+              "ALT"
+            ]
+          },
+          "counterparty_response": {
+            "type": "string",
+            "minLength": 5
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 5
+          },
+          "created_at": {
+            "$ref": "common.schema.json#/definitions/iso_datetime"
+          }
+        }
+      }
+    }
+    ,
+    "intake": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "answers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     }

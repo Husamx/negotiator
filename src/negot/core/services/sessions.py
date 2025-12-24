@@ -18,7 +18,7 @@ import orjson
 from pydantic import BaseModel, Field
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import delete, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,11 +29,13 @@ from ..models import (
     EventType,
     CaseSnapshot,
     Message,
+    MessageThread,
     MessageRole,
     Session,
     SessionEntity,
     StrategyExecution,
     StrategySelection,
+    Message as MessageModel,
     User,
     Fact,
     KnowledgeScope,
@@ -48,8 +50,10 @@ from ..schemas import (
     MemoryReviewResponse,
     PostMessageRequest,
     SessionDetail,
+    SessionMessageOut,
     SessionSummary,
     SessionUpdateRequest,
+    EntityOut,
 )
 from .case_snapshots import (
     apply_case_patches,
@@ -73,12 +77,18 @@ from .strategies import (
     run_strategy_selection,
 )
 from .strategy_packs import validate_case_snapshot
+from .route_generator import generate_route_branch
 from .entity_proposer import propose_entities
 from .templates import create_template_proposal_for_other, select_template
 from .web_grounding import need_search, plan_queries, run_search, synthesize
 from .llm_utils import acompletion_with_retry, extract_completion_text
 
 ROLEPLAY_HISTORY_LIMIT = 12
+DEFAULT_INTAKE_QUESTIONS = [
+    "What outcome are you aiming for?",
+    "What constraints or limits have they stated?",
+    "Are there other terms you can trade (timing, scope, bonuses, etc.)?",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +98,52 @@ class SessionRecapResult(BaseModel):
     after_action_report: Optional[str] = Field(None, description="Premium coaching summary.")
 
 
+async def _generate_session_title(
+    topic_text: Optional[str],
+    template_id: Optional[str],
+    channel: Optional[str],
+) -> str:
+    if not topic_text:
+        return "Negotiation Session"
+    settings = get_settings()
+    if not settings.litellm_model:
+        return topic_text.strip()[:80]
+    system_prompt = (
+        "You are a naming assistant for negotiation sessions. "
+        "Generate a short, specific title (3-6 words, max 60 characters). "
+        "No quotes, no trailing punctuation. Output plain text only."
+    )
+    payload = {
+        "topic_text": topic_text,
+        "template_id": template_id,
+        "channel": channel,
+    }
+    completion_kwargs = {
+        "model": settings.litellm_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(payload, default=str)},
+        ],
+        "temperature": 0.3,
+    }
+    if settings.litellm_api_key:
+        completion_kwargs["api_key"] = settings.litellm_api_key
+    if settings.litellm_base_url:
+        completion_kwargs["base_url"] = settings.litellm_base_url
+    try:
+        response = await acompletion_with_retry(**completion_kwargs)
+        content = extract_completion_text(response)
+        if not content:
+            return topic_text.strip()[:80]
+        title = content.strip().strip('"').strip("'")
+        if len(title) > 80:
+            title = title[:80]
+        return title or topic_text.strip()[:80]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Session title generation failed: %s", exc)
+        return topic_text.strip()[:80]
+
+
 async def create_session(
     db: AsyncSession,
     user: User,
@@ -95,7 +151,7 @@ async def create_session(
 ) -> CreateSessionResponse:
     """Create a new negotiation session for a user."""
     template_id = await select_template(req.topic_text)
-    title = (req.topic_text or "Negotiation Session").strip()[:80]
+    title = await _generate_session_title(req.topic_text, template_id, req.channel)
     session = Session(
         user_id=user.id,
         template_id=template_id,
@@ -105,6 +161,10 @@ async def create_session(
     )
     db.add(session)
     await db.flush()
+    thread = MessageThread(session_id=session.id)
+    db.add(thread)
+    await db.flush()
+    session.active_thread_id = thread.id
     # Attach pre-existing entities if provided
     attached_entities: List[Entity] = []
     if req.attached_entity_ids:
@@ -145,6 +205,21 @@ async def create_session(
         domain=case_snapshot.payload.get("domain"),
         strategy_summaries=strategy_summaries,
     )
+    if not intake_questions:
+        intake_questions = DEFAULT_INTAKE_QUESTIONS.copy()
+    updated_payload = dict(case_snapshot.payload)
+    updated_payload["intake"] = {
+        "questions": intake_questions,
+        "answers": {},
+        "summary": None,
+    }
+    updated_payload["updated_at"] = datetime.utcnow().isoformat()
+    try:
+        validate_case_snapshot(updated_payload)
+        case_snapshot.payload = updated_payload
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Case snapshot validation failed after intake questions: %s", exc)
+    await db.flush()
     if not intake_questions:
         try:
             await run_strategy_selection(
@@ -193,23 +268,91 @@ async def _fetch_attached_entity_ids(db: AsyncSession, session_id: int) -> List[
     return result.scalars().all()
 
 
-async def _fetch_recent_roleplay_history(
-    db: AsyncSession, session_id: int, exclude_message_id: Optional[int] = None
-) -> List[dict]:
-    query = (
-        select(Message)
-        .where(
-            Message.session_id == session_id,
-            Message.role.in_([MessageRole.user, MessageRole.counterparty]),
-        )
-        .order_by(desc(Message.created_at))
-        .limit(ROLEPLAY_HISTORY_LIMIT)
+async def _ensure_active_thread(db: AsyncSession, session: Session) -> MessageThread:
+    """Ensure the session has an active root thread and return it."""
+    if session.active_thread_id:
+        thread = await db.get(MessageThread, session.active_thread_id)
+        if thread:
+            return thread
+    thread = MessageThread(session_id=session.id)
+    db.add(thread)
+    await db.flush()
+    session.active_thread_id = thread.id
+    await db.execute(
+        update(Message)
+        .where(Message.session_id == session.id, Message.thread_id.is_(None))
+        .values(thread_id=thread.id)
     )
-    if exclude_message_id is not None:
-        query = query.where(Message.id != exclude_message_id)
-    result = await db.execute(query)
-    messages = list(result.scalars().all())
-    messages.reverse()
+    await db.flush()
+    return thread
+
+
+async def _get_root_thread_id(db: AsyncSession, session: Session) -> int:
+    result = await db.execute(
+        select(MessageThread.id)
+        .where(MessageThread.session_id == session.id, MessageThread.parent_thread_id.is_(None))
+        .order_by(MessageThread.created_at)
+        .limit(1)
+    )
+    root_id = result.scalar_one_or_none()
+    if root_id is None:
+        root_id = (await _ensure_active_thread(db, session)).id
+    return int(root_id)
+
+
+async def _get_thread_path_messages(
+    db: AsyncSession,
+    session: Session,
+    thread: MessageThread,
+    roles: Optional[List[MessageRole]] = None,
+    limit: Optional[int] = None,
+    exclude_message_id: Optional[int] = None,
+) -> List[Message]:
+    messages: List[Message] = []
+    chain: List[MessageThread] = []
+    current = thread
+    while current is not None:
+        chain.append(current)
+        if current.parent_thread_id:
+            current = await db.get(MessageThread, current.parent_thread_id)
+        else:
+            current = None
+    chain.reverse()
+    for idx, current_thread in enumerate(chain):
+        cutoff_id = None
+        if idx < len(chain) - 1:
+            cutoff_id = chain[idx + 1].parent_message_id
+        query = select(Message).where(
+            Message.thread_id == current_thread.id,
+            Message.session_id == session.id,
+        )
+        if cutoff_id:
+            query = query.where(Message.id <= cutoff_id)
+        if roles:
+            query = query.where(Message.role.in_(roles))
+        if exclude_message_id is not None:
+            query = query.where(Message.id != exclude_message_id)
+        query = query.order_by(Message.created_at)
+        result = await db.execute(query)
+        messages.extend(result.scalars().all())
+
+    if limit is not None and len(messages) > limit:
+        messages = messages[-limit:]
+    return messages
+
+
+async def _fetch_recent_roleplay_history(
+    db: AsyncSession, session: Session, exclude_message_id: Optional[int] = None
+) -> List[dict]:
+    thread = await _ensure_active_thread(db, session)
+    messages = await _get_thread_path_messages(
+        db,
+        session,
+        thread,
+        roles=[MessageRole.user, MessageRole.counterparty],
+        limit=ROLEPLAY_HISTORY_LIMIT,
+        exclude_message_id=exclude_message_id,
+    )
     history: List[dict] = []
     for msg in messages:
         role = "user" if msg.role == MessageRole.user else "assistant"
@@ -380,18 +523,34 @@ async def get_session_detail(db: AsyncSession, user: User, session_id: int) -> S
     """Return session detail with messages and attached entities."""
     result = await db.execute(
         select(Session)
-        .options(selectinload(Session.messages), selectinload(Session.attached_entities))
+        .options(selectinload(Session.attached_entities))
         .where(Session.id == session_id, Session.user_id == user.id)
     )
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    detail = SessionDetail.model_validate(session)
-    if detail.attached_entities:
+    thread = await _ensure_active_thread(db, session)
+    root_thread_id = await _get_root_thread_id(db, session)
+    path_messages = await _get_thread_path_messages(db, session, thread, roles=None)
+    attached_entities = []
+    if session.attached_entities:
         unique = {}
-        for ent in detail.attached_entities:
+        for ent in session.attached_entities:
             unique[ent.id] = ent
-        detail.attached_entities = list(unique.values())
+        attached_entities = [EntityOut.model_validate(ent) for ent in unique.values()]
+    detail = SessionDetail(
+        id=session.id,
+        template_id=session.template_id,
+        title=session.title,
+        topic_text=session.topic_text,
+        counterparty_style=session.counterparty_style,
+        created_at=session.created_at,
+        ended_at=session.ended_at,
+        active_thread_id=session.active_thread_id,
+        root_thread_id=root_thread_id,
+        attached_entities=attached_entities,
+        messages=[SessionMessageOut.model_validate(msg) for msg in path_messages],
+    )
     return detail
 
 
@@ -405,7 +564,7 @@ async def update_session(
     if req.counterparty_style is not None:
         session.counterparty_style = req.counterparty_style
     await db.flush()
-    return SessionDetail.model_validate(session)
+    return await get_session_detail(db, user, session_id)
 
 
 async def attach_entities(db: AsyncSession, user: User, session_id: int, entity_ids: List[int]) -> None:
@@ -459,10 +618,12 @@ async def stream_message(
         if session.ended_at is not None:
             yield _sse_json("error", {"detail": "Session has ended"})
             return
+        active_thread = await _ensure_active_thread(db, session)
         case_snapshot = await get_or_create_case_snapshot(db, session, None)
         role = MessageRole.user if req.channel == "roleplay" else MessageRole.coach
         user_message = Message(
             session_id=session.id,
+            thread_id=active_thread.id,
             role=role,
             content=req.content,
         )
@@ -471,7 +632,7 @@ async def stream_message(
         history: List[dict] = []
         if req.channel == "roleplay":
             history = await _fetch_recent_roleplay_history(
-                db, session.id, exclude_message_id=user_message.id
+                db, session, exclude_message_id=user_message.id
             )
         await emit_event(
             db,
@@ -624,6 +785,7 @@ async def stream_message(
             counterparty_message = "".join(counterparty_chunks).strip()
             reply = Message(
                 session_id=session.id,
+                thread_id=active_thread.id,
                 role=MessageRole.counterparty,
                 content=counterparty_message,
             )
@@ -796,6 +958,299 @@ async def list_session_events(db: AsyncSession, user: User, session_id: int) -> 
         select(Event).where(Event.session_id == session_id).order_by(Event.created_at)
     )
     return result.scalars().all()
+
+
+async def list_route_branches(
+    db: AsyncSession,
+    user: User,
+    session_id: int,
+    parent_message_id: Optional[int] = None,
+) -> List[dict]:
+    """List stored route branches for the session."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    await _ensure_active_thread(db, session)
+    query = select(MessageThread).where(
+        MessageThread.session_id == session.id, MessageThread.parent_message_id.is_not(None)
+    )
+    if parent_message_id is not None:
+        query = query.where(MessageThread.parent_message_id == parent_message_id)
+    result = await db.execute(query.order_by(MessageThread.created_at))
+    threads = result.scalars().all()
+    if not threads:
+        return []
+    thread_ids = [thread.id for thread in threads]
+    message_result = await db.execute(
+        select(Message)
+        .where(
+            Message.thread_id.in_(thread_ids),
+            Message.role == MessageRole.counterparty,
+        )
+        .order_by(Message.created_at)
+    )
+    messages = message_result.scalars().all()
+    first_message_by_thread: Dict[int, Message] = {}
+    for msg in messages:
+        if msg.thread_id not in first_message_by_thread:
+            first_message_by_thread[msg.thread_id] = msg
+    branches: List[dict] = []
+    for thread in threads:
+        counterparty_message = first_message_by_thread.get(thread.id)
+        branches.append(
+            {
+                "branch_id": str(thread.id),
+                "thread_id": thread.id,
+                "parent_message_id": int(thread.parent_message_id),
+                "variant": thread.variant or "LIKELY",
+                "counterparty_response": counterparty_message.content if counterparty_message else "",
+                "rationale": thread.rationale or "",
+                "action_label": thread.action_label or "",
+                "branch_label": thread.branch_label or "",
+                "created_at": thread.created_at.isoformat(),
+                "is_active": thread.id == session.active_thread_id,
+            }
+        )
+    return branches
+
+
+async def activate_thread(
+    db: AsyncSession, user: User, session_id: int, thread_id: int
+) -> SessionDetail:
+    """Activate a thread (branch) as the current mainline path."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    thread = await db.get(MessageThread, thread_id)
+    if thread is None or thread.session_id != session.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    session.active_thread_id = thread.id
+    await db.flush()
+    return await get_session_detail(db, user, session_id)
+
+
+async def update_branch(
+    db: AsyncSession,
+    user: User,
+    session_id: int,
+    thread_id: int,
+    branch_label: Optional[str] = None,
+    counterparty_response: Optional[str] = None,
+) -> dict:
+    """Update a branch label or its counterparty response."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    thread = await db.get(MessageThread, thread_id)
+    if thread is None or thread.session_id != session.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found")
+    if thread.parent_message_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot edit mainline thread.")
+    if branch_label is not None:
+        thread.branch_label = branch_label.strip() or None
+    if counterparty_response is not None:
+        msg_result = await db.execute(
+            select(Message)
+            .where(
+                Message.thread_id == thread.id,
+                Message.role == MessageRole.counterparty,
+            )
+            .order_by(Message.created_at)
+            .limit(1)
+        )
+        msg = msg_result.scalar_one_or_none()
+        if msg is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Branch response not found.")
+        msg.content = counterparty_response.strip()
+    await db.flush()
+    branch_list = await list_route_branches(db, user, session_id, parent_message_id=thread.parent_message_id)
+    for branch in branch_list:
+        if str(branch.get("thread_id")) == str(thread.id):
+            return branch
+    return {
+        "branch_id": str(thread.id),
+        "thread_id": thread.id,
+        "parent_message_id": int(thread.parent_message_id),
+        "variant": thread.variant or "LIKELY",
+        "counterparty_response": counterparty_response or "",
+        "rationale": thread.rationale or "",
+        "action_label": thread.action_label or "",
+        "branch_label": thread.branch_label or "",
+        "created_at": thread.created_at.isoformat(),
+        "is_active": thread.id == session.active_thread_id,
+    }
+
+
+async def copy_branch(
+    db: AsyncSession,
+    user: User,
+    session_id: int,
+    thread_id: int,
+    branch_label: Optional[str] = None,
+    counterparty_response: Optional[str] = None,
+) -> dict:
+    """Copy a branch into a new branch thread."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    source = await db.get(MessageThread, thread_id)
+    if source is None or source.session_id != session.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found")
+    if source.parent_message_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot copy mainline thread.")
+    msg_result = await db.execute(
+        select(Message)
+        .where(Message.thread_id == source.id, Message.role == MessageRole.counterparty)
+        .order_by(Message.created_at)
+        .limit(1)
+    )
+    msg = msg_result.scalar_one_or_none()
+    if msg is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Branch response not found.")
+    new_thread = MessageThread(
+        session_id=session.id,
+        parent_thread_id=source.parent_thread_id,
+        parent_message_id=source.parent_message_id,
+        variant=source.variant,
+        rationale=source.rationale,
+        action_label=source.action_label,
+        branch_label=branch_label or source.branch_label or source.action_label,
+    )
+    db.add(new_thread)
+    await db.flush()
+    new_msg = Message(
+        session_id=session.id,
+        thread_id=new_thread.id,
+        role=MessageRole.counterparty,
+        content=(counterparty_response or msg.content).strip(),
+    )
+    db.add(new_msg)
+    await db.flush()
+    return {
+        "branch_id": str(new_thread.id),
+        "thread_id": new_thread.id,
+        "parent_message_id": int(new_thread.parent_message_id),
+        "variant": new_thread.variant or "LIKELY",
+        "counterparty_response": new_msg.content,
+        "rationale": new_thread.rationale or "",
+        "action_label": new_thread.action_label or "",
+        "branch_label": new_thread.branch_label or "",
+        "created_at": new_thread.created_at.isoformat(),
+        "is_active": new_thread.id == session.active_thread_id,
+    }
+
+
+async def delete_branch(
+    db: AsyncSession, user: User, session_id: int, thread_id: int
+) -> None:
+    """Delete a branch thread and its messages."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    thread = await db.get(MessageThread, thread_id)
+    if thread is None or thread.session_id != session.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found")
+    if thread.parent_message_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete mainline thread.")
+    if session.active_thread_id == thread.id:
+        root_id = await _get_root_thread_id(db, session)
+        session.active_thread_id = root_id
+    await db.delete(thread)
+    await db.flush()
+
+
+async def generate_route(
+    db: AsyncSession,
+    user: User,
+    session_id: int,
+    variant: str,
+    existing_routes: Optional[List[dict]] = None,
+    parent_message_id: Optional[int] = None,
+) -> dict:
+    """Generate a new route branch anchored to the latest user message."""
+    session = await _get_session_or_404(db, session_id, user.id)
+    snapshot = await get_or_create_case_snapshot(db, session, None)
+    active_thread = await _ensure_active_thread(db, session)
+    # parent_message_id = latest user message (unless explicitly provided)
+    path_messages = await _get_thread_path_messages(
+        db,
+        session,
+        active_thread,
+        roles=[MessageRole.user, MessageRole.counterparty],
+        limit=None,
+    )
+    if parent_message_id is None:
+        for msg in reversed(path_messages):
+            if msg.role == MessageRole.user:
+                parent_message_id = msg.id
+                break
+    if not parent_message_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No user message found to anchor the route.",
+        )
+    parent_message = None
+    for msg in path_messages:
+        if msg.id == parent_message_id:
+            parent_message = msg
+            break
+    if parent_message is None or parent_message.role != MessageRole.user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid parent message for route generation.",
+        )
+    parent_thread_id = parent_message.thread_id
+    if not parent_thread_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Parent message is missing a thread assignment.",
+        )
+    history_messages: List[Message] = []
+    for msg in path_messages:
+        history_messages.append(msg)
+        if msg.id == parent_message_id:
+            break
+    history = [
+        {"role": "user" if msg.role == MessageRole.user else "assistant", "content": msg.content}
+        for msg in history_messages
+        if msg.role in [MessageRole.user, MessageRole.counterparty]
+    ]
+    strategy_selection = await get_latest_strategy_selection(db, session.id)
+    strategy_context = None
+    if strategy_selection:
+        try:
+            strategy_context = get_strategy(strategy_selection.selected_strategy_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Strategy context load failed: %s", exc)
+    result = await generate_route_branch(
+        case_snapshot=snapshot.payload,
+        history=history,
+        strategy_context=strategy_context,
+        counterparty_style=session.counterparty_style,
+        variant=variant,
+        existing_routes=existing_routes or [],
+    )
+    branch_thread = MessageThread(
+        session_id=session.id,
+        parent_thread_id=parent_thread_id,
+        parent_message_id=int(parent_message_id),
+        variant=variant,
+        rationale=result.rationale,
+        action_label=result.action_label,
+        branch_label=result.action_label,
+    )
+    db.add(branch_thread)
+    await db.flush()
+    branch_message = Message(
+        session_id=session.id,
+        thread_id=branch_thread.id,
+        role=MessageRole.counterparty,
+        content=result.counterparty_response,
+    )
+    db.add(branch_message)
+    await db.flush()
+    branch = {
+        "branch_id": str(branch_thread.id),
+        "thread_id": branch_thread.id,
+        "parent_message_id": int(parent_message_id),
+        "variant": variant,
+        "counterparty_response": result.counterparty_response,
+        "rationale": result.rationale,
+        "action_label": result.action_label,
+        "branch_label": result.action_label,
+        "created_at": branch_thread.created_at.isoformat(),
+    }
+    return branch
 
 
 async def get_case_snapshot_detail(

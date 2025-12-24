@@ -3,15 +3,117 @@ Streamlit UI for the Negotiation Companion (v0.1).
 """
 from __future__ import annotations
 
+import html
 import json
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import httpx
 import streamlit as st
+from streamlit import components
 
 
 API_BASE_URL = "http://localhost:8000"
 AUTO_START_ROLEPLAY_MESSAGE = "Let's begin the roleplay."
+
+
+def _inject_canvas_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Fraunces:wght@600&display=swap');
+        :root {
+            --bg: #f6f1e8;
+            --panel: #fff9f0;
+            --panel-alt: #f0ebe2;
+            --ink: #1f1b16;
+            --muted: #6f6256;
+            --accent: #2f6f73;
+            --accent-2: #c46a4a;
+            --stroke: #e0d7cb;
+        }
+        .stApp {
+            background: radial-gradient(circle at 10% 10%, #fff7ea 0%, #f6f1e8 35%, #efe6db 100%);
+            color: var(--ink);
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        h1, h2, h3 {
+            font-family: 'Fraunces', serif;
+            color: var(--ink);
+        }
+        .canvas-card {
+            background: var(--panel);
+            border: 1px solid var(--stroke);
+            border-radius: 16px;
+            padding: 16px 18px;
+            box-shadow: 0 10px 30px rgba(31, 27, 22, 0.06);
+            margin-bottom: 12px;
+        }
+        .canvas-chip {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: var(--panel-alt);
+            border: 1px solid var(--stroke);
+            color: var(--muted);
+            font-size: 12px;
+            margin-right: 6px;
+            margin-bottom: 6px;
+        }
+        .node {
+            border-radius: 14px;
+            padding: 12px 14px;
+            margin: 10px 0;
+            border: 1px solid var(--stroke);
+            background: #ffffff;
+            position: relative;
+        }
+        .node.user {
+            border-left: 4px solid var(--accent);
+        }
+        .node.counterparty {
+            border-left: 4px solid var(--accent-2);
+        }
+        .node.route {
+            border-style: dashed;
+            background: #fbf6ee;
+        }
+        .branch-stack {
+            margin-left: 24px;
+            border-left: 2px dashed var(--stroke);
+            padding-left: 16px;
+        }
+        .node-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+        .routes {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 6px;
+        }
+        .route-card {
+            border: 1px dashed var(--stroke);
+            border-radius: 12px;
+            padding: 8px 10px;
+            background: #fbf6ee;
+            font-size: 12px;
+            color: var(--muted);
+        }
+        .fade-in {
+            animation: fadeIn 0.6s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _headers(user_id: str) -> Dict[str, str]:
@@ -744,6 +846,193 @@ def _render_chat_panel() -> None:
     _render_session_event_log(session_id)
 
 
+def _escape_html(text: str) -> str:
+    return html.escape(text or "").replace("\n", "<br>")
+
+
+def _build_turns(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    turns: List[Dict[str, Any]] = []
+    current: Dict[str, Any] = {}
+    for msg in messages:
+        role = msg.get("role")
+        if role == "user":
+            if current:
+                turns.append(current)
+            current = {"user": msg.get("content", ""), "assistant": None, "coach_panel": None}
+        elif role == "assistant":
+            if not current:
+                current = {"user": None, "assistant": None, "coach_panel": None}
+            current["assistant"] = msg.get("content", "")
+            current["coach_panel"] = msg.get("coach_panel")
+            turns.append(current)
+            current = {}
+    if current:
+        turns.append(current)
+    return turns
+
+
+def _render_canvas_tree(messages: List[Dict[str, Any]], branches: Optional[List[Dict[str, Any]]] = None) -> None:
+    turns = _build_turns(messages)
+    if not turns:
+        st.info("No roleplay turns yet. Start the conversation to grow the tree.")
+        return
+    branches = branches or []
+    branch_variants = {"LIKELY": "Likely", "RISK": "Risk", "BEST": "Best", "ALT": "Alt"}
+    for idx, turn in enumerate(turns, start=1):
+        user_text = _escape_html(turn.get("user") or "")
+        assistant_text = _escape_html(turn.get("assistant") or "")
+        st.markdown(
+            f"""
+            <div class="canvas-card fade-in">
+              <div class="node user">
+                <div class="node-label">User move {idx}</div>
+                <div>{user_text or "..."}</div>
+              </div>
+              <div class="node counterparty">
+                <div class="node-label">Counterparty response</div>
+                <div>{assistant_text or "..."}</div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if idx == len(turns) and branches:
+            st.markdown('<div class="branch-stack">', unsafe_allow_html=True)
+            for branch in branches:
+                variant = branch_variants.get(branch.get("variant"), "Route")
+                c_text = _escape_html(branch.get("counterparty_response") or "")
+                action_label = _escape_html(branch.get("action_label") or "")
+                action_line = f"<div class=\"node-label\">{action_label}</div>" if action_label else ""
+                st.markdown(
+                    f"""
+                    <div class="node counterparty route">
+                      <div class="node-label">{variant} route</div>
+                      {action_line}
+                      <div>{c_text or "..."}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_routes_panel(
+    session_id: int,
+    branches: List[Dict[str, Any]],
+) -> None:
+    st.markdown("### Possible routes")
+    if not branches:
+        st.markdown(
+            '<div class="canvas-card">No route suggestions yet. They will appear as the conversation evolves.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown('<div class="canvas-card">', unsafe_allow_html=True)
+        st.markdown('<div class="routes">', unsafe_allow_html=True)
+        for branch in branches:
+            label = _escape_html(branch.get("variant") or "Route")
+            rationale = _escape_html(branch.get("rationale") or "")
+            st.markdown(
+                f'<div class="route-card"><strong>{label}</strong><br>{rationale}</div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown("</div></div>", unsafe_allow_html=True)
+    variant = st.selectbox(
+        "Generate route type",
+        options=["LIKELY", "RISK", "BEST", "ALT"],
+        index=0,
+        key=f"route_variant_{session_id}",
+    )
+    button_label = "Generate another route" if branches else "Generate route"
+    if st.button(button_label, key=f"generate_route_{session_id}"):
+        existing = [
+            {
+                "counterparty_response": b.get("counterparty_response"),
+                "rationale": b.get("rationale"),
+                "action_label": b.get("action_label"),
+            }
+            for b in branches
+        ]
+        resp = _api_post(
+            f"/sessions/{session_id}/routes/generate",
+            st.session_state.user_id,
+            {"variant": variant, "existing_routes": existing},
+        )
+        if resp.status_code != 200:
+            st.error(resp.text)
+        else:
+            st.rerun()
+
+
+def _render_canvas_header(session_data: Dict[str, Any], snapshot: Dict[str, Any]) -> None:
+    title = session_data.get("title") or "Negotiation"
+    topic = session_data.get("topic_text") or ""
+    template_id = session_data.get("template_id") or ""
+    style = session_data.get("counterparty_style") or "neutral"
+    channel = (snapshot.get("channel") or session_data.get("channel") or "").upper()
+    st.markdown(f"## {title}")
+    if topic:
+        st.caption(topic)
+    chips = [
+        f"Template: {template_id}" if template_id else None,
+        f"Style: {style}",
+        f"Channel: {channel}" if channel else None,
+    ]
+    chip_html = "".join(
+        f'<span class="canvas-chip">{_escape_html(item)}</span>' for item in chips if item
+    )
+    st.markdown(f"<div>{chip_html}</div>", unsafe_allow_html=True)
+
+
+def _render_counterparty_card(snapshot: Dict[str, Any]) -> None:
+    counterpart = (snapshot.get("parties") or {}).get("counterpart") or {}
+    stance = counterpart.get("stance")
+    constraints = counterpart.get("constraints") or []
+    st.markdown("### Counterparty")
+    st.markdown('<div class="canvas-card">', unsafe_allow_html=True)
+    if stance:
+        st.markdown(f"**Stance**: {_escape_html(stance)}", unsafe_allow_html=True)
+    else:
+        st.markdown("**Stance**: Unknown", unsafe_allow_html=True)
+    if constraints:
+        st.markdown("**Constraints**", unsafe_allow_html=True)
+        for item in constraints:
+            st.markdown(f"- {_escape_html(str(item))}", unsafe_allow_html=True)
+    else:
+        st.markdown("**Constraints**: Not captured yet.", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_objectives_card(snapshot: Dict[str, Any]) -> None:
+    objectives = snapshot.get("objectives") or {}
+    st.markdown("### Your targets")
+    st.markdown('<div class="canvas-card">', unsafe_allow_html=True)
+    for label, key in [("Target", "target"), ("Acceptable", "acceptable"), ("Walk-away", "walk_away")]:
+        value = objectives.get(key)
+        display = _escape_html(str(value)) if value not in (None, "") else "Unknown"
+        st.markdown(f"**{label}**: {display}", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_canvas_panel() -> None:
+    session_id = st.session_state.session_id
+    if not session_id:
+        st.markdown("## Negotiation Canvas")
+        st.markdown(
+            '<div class="canvas-card">Start a new session or open an existing one to see your negotiation map.</div>',
+            unsafe_allow_html=True,
+        )
+        return
+    canvas_url = (
+        f"http://localhost:5173/?user_id={st.session_state.user_id}"
+        f"&session_id={session_id}&api_base={API_BASE_URL}"
+    )
+    components.v1.iframe(canvas_url, height=900, scrolling=True)
+    st.caption(
+        "If the canvas is blank, start the web UI with `npm install` and `npm run dev` in `web_canvas/`."
+    )
+
+
 def _render_memory_review_panel() -> None:
     st.markdown("### Memory Review")
     session_id = st.session_state.session_id
@@ -1252,19 +1541,30 @@ def main() -> None:
     st.title("Negotiation Companion")
     _ensure_user_state()
     _load_user_profile()
+    _inject_canvas_styles()
 
-    left_col, center_col, right_col = st.columns([1.2, 2.2, 1.6])
-
-    with left_col:
+    with st.sidebar:
+        st.markdown("### Workspace")
+        view = st.radio(
+            "View",
+            ["Negotiation Canvas", "Debug"],
+            index=0,
+            horizontal=False,
+        )
+        st.markdown("---")
         _render_user_controls()
         st.markdown("---")
         _render_sessions_panel()
         st.markdown("---")
         _render_new_session_panel()
 
+    if view == "Negotiation Canvas":
+        _render_canvas_panel()
+        return
+
+    center_col, right_col = st.columns([2.2, 1.6])
     with center_col:
         _render_chat_panel()
-
     with right_col:
         with st.expander("Memory Review", expanded=True):
             _render_memory_review_panel()

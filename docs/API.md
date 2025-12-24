@@ -101,6 +101,31 @@ Response:
 - judge_outputs
 - trace
 
+### 2.9 Route generation (Negotiation Canvas)
+`GET /sessions/{session_id}/routes?parent_message_id=123`
+`POST /sessions/{session_id}/routes/generate`
+`POST /sessions/{session_id}/threads/{thread_id}/activate`
+`POST /sessions/{session_id}/threads/{thread_id}/copy`
+`PATCH /sessions/{session_id}/threads/{thread_id}`
+`DELETE /sessions/{session_id}/threads/{thread_id}`
+
+Request (generate):
+- variant: LIKELY | RISK | BEST | ALT
+- existing_routes: [{counterparty_response, action_label, rationale}]
+- parent_message_id (optional)
+
+Response:
+- branch_id
+- thread_id
+- parent_message_id
+- variant
+- counterparty_response
+- rationale
+- action_label
+- branch_label
+- created_at
+- is_active (optional)
+
 ## 3. Web grounding (explicit endpoint)
 Optional explicit endpoint (useful for UI refresh/debug):
 `POST /sessions/{session_id}/grounding`

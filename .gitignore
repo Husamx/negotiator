@@ -1,7 +1,11 @@
 # --- Environment / secrets ---
 .env
+.db
+*.db
+*.zip
 .env.*
 !.env.example
+*.pyc
 
 # --- Python bytecode / caches ---
 __pycache__/

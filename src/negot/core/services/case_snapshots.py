@@ -100,6 +100,8 @@ def build_initial_case_snapshot(session: Session, channel: Optional[str]) -> dic
         "timeline": {"recent_events": []},
         "offer_matrix": {"packages": []},
         "concession_ledger": [],
+        "route_branches": [],
+        "intake": {"questions": [], "answers": {}, "summary": None},
     }
 
 
@@ -199,12 +201,24 @@ async def update_case_snapshot_from_intake(
     }
     patches = await _extract_case_patches(snapshot.payload, evidence)
     updated_payload = apply_case_patches(snapshot.payload, patches)
+    updated_payload["intake"] = {
+        "questions": questions,
+        "answers": answers,
+        "summary": summary,
+    }
     updated_payload["updated_at"] = _now_iso()
     try:
         validate_case_snapshot(updated_payload)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Case snapshot validation failed (intake). Error: %s", exc)
-        updated_payload = snapshot.payload
+        fallback_payload = dict(snapshot.payload)
+        fallback_payload["intake"] = {
+            "questions": questions,
+            "answers": answers,
+            "summary": summary,
+        }
+        fallback_payload["updated_at"] = _now_iso()
+        updated_payload = fallback_payload
     snapshot.payload = updated_payload
     await db.flush()
     return snapshot

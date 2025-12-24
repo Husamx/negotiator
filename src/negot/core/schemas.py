@@ -143,6 +143,7 @@ class SessionMessageOut(BaseModel):
     role: MessageRole
     content: str
     created_at: datetime
+    thread_id: Optional[int] = None
 
 
 class SessionSummary(BaseModel):
@@ -171,6 +172,8 @@ class SessionDetail(BaseModel):
     counterparty_style: Optional[str] = None
     created_at: datetime
     ended_at: Optional[datetime] = None
+    active_thread_id: Optional[int] = None
+    root_thread_id: Optional[int] = None
     attached_entities: List[EntityOut] = []
     messages: List[SessionMessageOut] = []
 
@@ -468,3 +471,42 @@ class GroundingResponse(BaseModel):
     grounding_pack: dict
     sources: List[dict] = []
     budget_spent: int = 0
+
+
+class RouteGenerateRequest(BaseModel):
+    """Request model for generating a single route branch."""
+
+    variant: str = Field("LIKELY", description="Route variant: LIKELY, RISK, BEST, ALT.")
+    existing_routes: List[dict] = Field(default_factory=list, description="Existing routes to avoid duplicating.")
+    parent_message_id: Optional[int] = Field(
+        None, description="Optional user message ID to anchor the branch."
+    )
+
+
+class RouteBranchOut(BaseModel):
+    """Response model for a generated route branch."""
+
+    branch_id: str
+    thread_id: int
+    parent_message_id: int
+    variant: str
+    counterparty_response: str
+    rationale: str
+    action_label: Optional[str] = None
+    branch_label: Optional[str] = None
+    created_at: str
+    is_active: Optional[bool] = None
+
+
+class BranchUpdateRequest(BaseModel):
+    """Update a branch label or response."""
+
+    branch_label: Optional[str] = None
+    counterparty_response: Optional[str] = None
+
+
+class BranchCopyRequest(BaseModel):
+    """Copy a branch, optionally overriding label/response."""
+
+    branch_label: Optional[str] = None
+    counterparty_response: Optional[str] = None

@@ -161,6 +161,9 @@ class Session(Base):
     counterparty_style: Mapped[Optional[str]] = mapped_column(String(length=20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    active_thread_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("message_threads.id"), nullable=True
+    )
 
     # Relationship
     user: Mapped[User] = relationship("User", back_populates="sessions")
@@ -169,6 +172,15 @@ class Session(Base):
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="Message.created_at",
+    )
+    active_thread: Mapped[Optional["MessageThread"]] = relationship(
+        "MessageThread", foreign_keys=[active_thread_id]
+    )
+    threads: Mapped[list["MessageThread"]] = relationship(
+        "MessageThread",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        foreign_keys="MessageThread.session_id",
     )
     attached_entities: Mapped[list["Entity"]] = relationship(
         "Entity",
@@ -196,12 +208,44 @@ class SessionEntity(Base):
     attached_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class MessageThread(Base):
+    """Represents a branchable message thread within a session."""
+
+    __tablename__ = "message_threads"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    parent_thread_id: Mapped[Optional[int]] = mapped_column(ForeignKey("message_threads.id"), nullable=True)
+    parent_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    variant: Mapped[Optional[str]] = mapped_column(String(length=10), nullable=True)
+    rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    action_label: Mapped[Optional[str]] = mapped_column(String(length=80), nullable=True)
+    branch_label: Mapped[Optional[str]] = mapped_column(String(length=120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    session: Mapped[Session] = relationship(
+        "Session", back_populates="threads", foreign_keys=[session_id]
+    )
+    parent_thread: Mapped[Optional["MessageThread"]] = relationship(
+        "MessageThread", remote_side=[id], back_populates="child_threads"
+    )
+    child_threads: Mapped[list["MessageThread"]] = relationship(
+        "MessageThread", back_populates="parent_thread"
+    )
+    messages: Mapped[list["Message"]] = relationship(
+        "Message",
+        back_populates="thread",
+        cascade="all, delete-orphan",
+        order_by="Message.created_at",
+    )
+
+
 class Message(Base):
     """A single chat message within a session."""
 
     __tablename__ = "messages"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    thread_id: Mapped[Optional[int]] = mapped_column(ForeignKey("message_threads.id"), nullable=True)
     role: Mapped[MessageRole] = mapped_column(Enum(MessageRole), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -212,6 +256,7 @@ class Message(Base):
     safety_flags: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     session: Mapped[Session] = relationship("Session", back_populates="messages")
+    thread: Mapped[Optional[MessageThread]] = relationship("MessageThread", back_populates="messages")
 
 
 class CaseSnapshot(Base):
