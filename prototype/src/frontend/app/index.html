@@ -272,7 +272,22 @@
         <section id="debug" class="panel">
           <h1>Debug</h1>
           <div class="panel-grid">
-            <button id="loadTrace" class="primary">Load Latest Trace</button>
+            <div class="row">
+              <div>
+                <label>Simulation Run</label>
+                <select id="debugRunSelect"></select>
+              </div>
+              <div>
+                <label>Search Traces</label>
+                <input type="text" id="debugSearchInput" placeholder="e.g. error" />
+              </div>
+              <div class="actions">
+                <button id="loadTrace" class="primary">Load Trace</button>
+                <button id="debugSearchButton">Search</button>
+                <button id="debugSearchClear">Clear</button>
+              </div>
+            </div>
+            <div id="debugStatus" class="status"></div>
             <div class="section">
               <h2>Agent Flow</h2>
               <div id="traceFlow" class="trace-flow"></div>

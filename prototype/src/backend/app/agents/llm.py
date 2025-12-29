@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any, Dict, Optional, Tuple, Type
@@ -53,50 +54,71 @@ class LLMClient:
             },
         }
 
-        start_time = time.monotonic()
-        response = await self._client.post(
-            self._endpoint,
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        )
-        latency_ms = (time.monotonic() - start_time) * 1000
-        if response.status_code >= 400:
-            raise RuntimeError(f"OpenRouter error {response.status_code}: {response.text}")
+        max_retries = 2
+        last_error: Optional[Exception] = None
+        for attempt in range(max_retries + 1):
+            start_time = time.monotonic()
+            try:
+                response = await self._client.post(
+                    self._endpoint,
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                latency_ms = (time.monotonic() - start_time) * 1000
+                if response.status_code >= 400:
+                    raise RuntimeError(f"OpenRouter error {response.status_code}: {response.text}")
 
-        response_json = response.json()
-        raw_output = json.dumps(response_json)
-        if isinstance(response_json, dict) and response_json.get("error"):
-            error = response_json.get("error") or {}
-            message = error.get("message") or error.get("type") or str(error)
-            raise LLMResponseError(f"OpenRouter error: {message}", raw_output=raw_output, response_json=response_json)
-        usage: Optional[Dict[str, Any]] = response_json.get("usage")
-        content = self._extract_message_content(response_json)
-        if not content:
-            raise LLMResponseError("OpenRouter response missing message content", raw_output=raw_output, response_json=response_json)
+                response_json = response.json()
+                raw_output = json.dumps(response_json)
+                if isinstance(response_json, dict) and response_json.get("error"):
+                    error = response_json.get("error") or {}
+                    message = error.get("message") or error.get("type") or str(error)
+                    raise LLMResponseError(
+                        f"OpenRouter error: {message}", raw_output=raw_output, response_json=response_json
+                    )
+                usage: Optional[Dict[str, Any]] = response_json.get("usage")
+                content = self._extract_message_content(response_json)
+                if not content:
+                    raise LLMResponseError(
+                        "OpenRouter response missing message content", raw_output=raw_output, response_json=response_json
+                    )
 
-        cleaned = self._strip_code_fence(content)
-        parsed_payload = json.loads(cleaned)
-        validated = response_model.model_validate(parsed_payload)
-        parsed_output = validated.model_dump()
+                cleaned = self._strip_code_fence(content)
+                try:
+                    parsed_payload = json.loads(cleaned)
+                except json.JSONDecodeError as exc:
+                    raise LLMResponseError(
+                        f"OpenRouter response invalid JSON: {exc}", raw_output=raw_output, response_json=response_json
+                    ) from exc
+                validated = response_model.model_validate(parsed_payload)
+                parsed_output = validated.model_dump()
 
-        if usage is not None and hasattr(usage, "model_dump"):
-            usage = usage.model_dump()
-        elif usage is not None and hasattr(usage, "dict"):
-            usage = usage.dict()
+                if usage is not None and hasattr(usage, "model_dump"):
+                    usage = usage.model_dump()
+                elif usage is not None and hasattr(usage, "dict"):
+                    usage = usage.dict()
 
-        meta = {
-            "model_params": {
-                "provider": "openrouter",
-                "model": OPENROUTER_MODEL,
-                "temperature": payload.get("temperature"),
-            },
-            "token_usage": usage,
-            "latency_ms": latency_ms,
-        }
-        return raw_output, parsed_output, meta
+                meta = {
+                    "model_params": {
+                        "provider": "openrouter",
+                        "model": OPENROUTER_MODEL,
+                        "temperature": payload.get("temperature"),
+                    },
+                    "token_usage": usage,
+                    "latency_ms": latency_ms,
+                }
+                return raw_output, parsed_output, meta
+            except (LLMResponseError, ValueError) as exc:
+                last_error = exc
+                if attempt < max_retries:
+                    await asyncio.sleep(0.3 * (attempt + 1))
+                    continue
+                raise
+
+        raise last_error or RuntimeError("LLM request failed after retries")
 
     @staticmethod
     def _extract_message_content(response_json: Dict[str, Any]) -> str:

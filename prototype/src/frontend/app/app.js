@@ -3,12 +3,19 @@ const state = {
   caseData: null,
   runs: [],
   personaDistribution: null,
+  debugRunsAll: [],
 };
 
 const navLinks = document.querySelectorAll(".nav-link");
 const panels = document.querySelectorAll(".panel");
 const debugToggle = document.getElementById("debugToggle");
 const debugNav = document.getElementById("debugNav");
+const debugRunSelect = document.getElementById("debugRunSelect");
+const debugStatus = document.getElementById("debugStatus");
+const debugSearchInput = document.getElementById("debugSearchInput");
+const debugSearchButton = document.getElementById("debugSearchButton");
+const debugSearchClear = document.getElementById("debugSearchClear");
+const debugTraceCache = new Map();
 const RUN_PREVIEW_WORDS_MAX = 5;
 const RUN_PREVIEW_DELAY_CAP_MS = 120;
 const RUN_PREVIEW_DELAY_MIN_MS = 30;
@@ -23,6 +30,7 @@ const runPreviewState = {
   pollTimer: null,
   expectedRuns: null,
   completedRuns: 0,
+  baseRuns: null,
 };
 
 navLinks.forEach((btn) => {
@@ -46,6 +54,9 @@ function setActivePanel(id) {
   if (id === "counterparty") {
     loadCounterpartyHints();
   }
+  if (id === "debug") {
+    refreshDebugRuns();
+  }
 }
 
 function updateStatus(message) {
@@ -63,6 +74,7 @@ function stopRunPreview() {
   runPreviewState.pollTimer = null;
   runPreviewState.expectedRuns = null;
   runPreviewState.completedRuns = 0;
+  runPreviewState.baseRuns = null;
 }
 
 function streamPreviewText(text) {
@@ -106,6 +118,7 @@ async function startRunPreview(caseId, expectedRuns) {
   if (meta) meta.textContent = "";
   runPreviewState.expectedRuns = expectedRuns || null;
   runPreviewState.completedRuns = 0;
+  runPreviewState.baseRuns = null;
   await refreshRunPreviewSummaries(caseId);
   runPreviewState.pollTimer = setInterval(() => {
     refreshRunPreviewSummaries(caseId);
@@ -125,9 +138,13 @@ async function refreshRunPreviewSummaries(caseId) {
         return run.summary?.summary || run.summary?.summary_text;
       })
       .filter(Boolean);
-    runPreviewState.completedRuns = runs.length;
+    if (runPreviewState.baseRuns === null) {
+      runPreviewState.baseRuns = runs.length;
+    }
+    runPreviewState.completedRuns = Math.max(0, runs.length - runPreviewState.baseRuns);
     if (meta && runPreviewState.expectedRuns) {
-      meta.textContent = `Running… ${runPreviewState.completedRuns}/${runPreviewState.expectedRuns} complete`;
+      const completed = Math.min(runPreviewState.completedRuns, runPreviewState.expectedRuns);
+      meta.textContent = `Running… ${completed}/${runPreviewState.expectedRuns} complete`;
     }
     if (!summaries.length) {
       if (target && !runPreviewState.expectedRuns) target.textContent = "Running simulations...";
@@ -1318,11 +1335,66 @@ function renderRuns() {
   const table = document.getElementById("runsTable");
   table.innerHTML = "";
   state.runs.forEach((run) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "run-row";
+
     const row = document.createElement("div");
     row.className = "row";
-    row.innerHTML = `<strong>${run.outcome}</strong> | persona: ${run.persona_id} | utility: ${run.user_utility.toFixed(2)} | turns: ${run.turns.length}`;
-    table.appendChild(row);
+    const errorCount = run.error_count || 0;
+    const errorBadge = errorCount
+      ? `<span class="run-error-badge">⚠ ${errorCount} error${errorCount === 1 ? "" : "s"}</span>`
+      : "";
+    row.innerHTML = `<strong>${run.outcome}</strong> | persona: ${run.persona_id} | utility: ${run.user_utility.toFixed(2)} | turns: ${run.turns.length} ${errorBadge}`;
+
+    if (errorCount) {
+      const errorButton = document.createElement("button");
+      errorButton.className = "run-error-btn";
+      errorButton.type = "button";
+      errorButton.textContent = "View errors";
+      row.appendChild(errorButton);
+
+      const errorPanel = document.createElement("div");
+      errorPanel.className = "run-errors";
+      errorPanel.hidden = true;
+
+      errorButton.addEventListener("click", async () => {
+        errorPanel.hidden = !errorPanel.hidden;
+        if (!errorPanel.hidden && !errorPanel.dataset.loaded) {
+          errorPanel.textContent = "Loading errors...";
+          try {
+            const res = await fetch(`/runs/${run.run_id}/trace`);
+            if (!res.ok) throw new Error(await res.text());
+            const trace = await res.json();
+            const failures = (trace?.agent_call_traces || []).filter(
+              (call) => (call.validation_result || {}).status === "FAIL"
+            );
+            if (!failures.length) {
+              errorPanel.textContent = "No errors found in trace.";
+            } else {
+              const lines = failures.map((call) => {
+                const agent = call.agent_name || "Agent";
+                const reason = (call.validation_result || {}).reason || "Unknown error";
+                const raw = call.raw_output || "";
+                return `${agent}: ${reason}\n${raw}`.trim();
+              });
+              errorPanel.textContent = lines.join("\n\n---\n\n");
+            }
+            errorPanel.dataset.loaded = "true";
+          } catch (err) {
+            errorPanel.textContent = `Error loading trace: ${err.message}`;
+          }
+        }
+      });
+
+      wrapper.appendChild(row);
+      wrapper.appendChild(errorPanel);
+    } else {
+      wrapper.appendChild(row);
+    }
+
+    table.appendChild(wrapper);
   });
+  populateDebugRuns(state.runs);
 }
 
 document.getElementById("loadInsights").addEventListener("click", async () => {
@@ -1366,11 +1438,17 @@ document.getElementById("loadStrategies").addEventListener("click", async () => 
 });
 
 document.getElementById("loadTrace").addEventListener("click", async () => {
-  if (!state.runs.length) {
+  if (!state.caseId) {
     updateStatus("Run a simulation first.");
     return;
   }
-  const runId = state.runs[state.runs.length - 1].run_id;
+  const selectedId = debugRunSelect?.value;
+  const fallbackId = state.runs.length ? state.runs[state.runs.length - 1].run_id : null;
+  const runId = selectedId || fallbackId;
+  if (!runId) {
+    updateStatus("Run a simulation first.");
+    return;
+  }
   const res = await fetch(`/runs/${runId}/trace`);
   const data = await res.json();
   document.getElementById("traceOutput").textContent = formatJson(data);
@@ -1382,10 +1460,25 @@ if (closeInsightButton) {
   closeInsightButton.addEventListener("click", closeInsightDetail);
 }
 
+if (debugSearchButton) {
+  debugSearchButton.addEventListener("click", () => {
+    searchDebugTraces();
+  });
+}
+
+if (debugSearchClear) {
+  debugSearchClear.addEventListener("click", () => {
+    if (debugSearchInput) debugSearchInput.value = "";
+    populateDebugRuns(state.debugRunsAll || state.runs);
+    if (debugStatus) debugStatus.textContent = "Search cleared.";
+  });
+}
+
 populateSampleCaseSelect();
 loadSampleCase();
 renderCounterpartyHints();
 refreshSavedCases();
+refreshDebugRuns();
 
 function renderInsights(data) {
   closeInsightDetail();
@@ -1585,6 +1678,87 @@ function renderInsightConversation(turns) {
     bubble.textContent = turn.message_text || "";
     container.appendChild(bubble);
   });
+}
+
+function populateDebugRuns(runs = []) {
+  if (!debugRunSelect) return;
+  debugRunSelect.innerHTML = "";
+  if (!runs.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No runs yet";
+    debugRunSelect.appendChild(option);
+    return;
+  }
+  runs.forEach((run, index) => {
+    const option = document.createElement("option");
+    option.value = run.run_id;
+    const label = `${index + 1}. ${run.outcome} · ${run.run_id.slice(0, 8)}`;
+    option.textContent = label;
+    debugRunSelect.appendChild(option);
+  });
+}
+
+async function refreshDebugRuns() {
+  if (!debugRunSelect) return;
+  if (!state.caseId) {
+    populateDebugRuns([]);
+    if (debugStatus) debugStatus.textContent = "Create a case and run simulations to see traces.";
+    return;
+  }
+  if (debugStatus) debugStatus.textContent = "Loading runs...";
+  try {
+    const res = await fetch(`/cases/${state.caseId}/runs`);
+    if (!res.ok) throw new Error(await res.text());
+    const runs = await res.json();
+    state.runs = runs || [];
+    state.debugRunsAll = state.runs;
+    debugTraceCache.clear();
+    populateDebugRuns(state.debugRunsAll);
+    if (debugStatus) debugStatus.textContent = `Loaded ${state.runs.length} run(s).`;
+  } catch (err) {
+    if (debugStatus) debugStatus.textContent = `Error loading runs: ${err.message}`;
+  }
+}
+
+async function searchDebugTraces() {
+  if (!debugRunSelect || !state.caseId) {
+    if (debugStatus) debugStatus.textContent = "Run a simulation first.";
+    return;
+  }
+  const query = (debugSearchInput?.value || "").trim().toLowerCase();
+  if (!query) {
+    populateDebugRuns(state.debugRunsAll || state.runs);
+    if (debugStatus) debugStatus.textContent = "Search cleared.";
+    return;
+  }
+  if (debugStatus) debugStatus.textContent = `Searching for "${query}"...`;
+  const runs = state.debugRunsAll || state.runs || [];
+  const matches = [];
+  for (const run of runs) {
+    if (!run?.run_id) continue;
+    let haystack = debugTraceCache.get(run.run_id);
+    if (!haystack) {
+      try {
+        const res = await fetch(`/runs/${run.run_id}/trace`);
+        if (!res.ok) throw new Error(await res.text());
+        const trace = await res.json();
+        haystack = JSON.stringify(trace).toLowerCase();
+        debugTraceCache.set(run.run_id, haystack);
+      } catch (err) {
+        continue;
+      }
+    }
+    if (haystack.includes(query)) {
+      matches.push(run);
+    }
+  }
+  populateDebugRuns(matches);
+  if (debugStatus) {
+    debugStatus.textContent = matches.length
+      ? `Found ${matches.length} run(s) matching "${query}".`
+      : `No runs matched "${query}".`;
+  }
 }
 
 function mean(values) {

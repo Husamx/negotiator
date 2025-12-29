@@ -173,6 +173,12 @@ async def simulate(case_id: str, request: SimulationRequest):
     runs_payload = []
     async for result in engine.run_stream(case, request.runs, request.max_turns, request.mode):
         run_data = model_to_dict(result.run)
+        error_count = 0
+        for call in result.trace_bundle.get("agent_call_traces", []):
+            status = (call.get("validation_result") or {}).get("status")
+            if status == "FAIL":
+                error_count += 1
+        run_data["error_count"] = error_count
         run_repo.add(run_data)
         trace_repo.add(run_data["run_id"], result.trace_bundle)
         runs_payload.append(run_data)
