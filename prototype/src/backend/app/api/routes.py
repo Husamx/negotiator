@@ -170,9 +170,8 @@ async def simulate(case_id: str, request: SimulationRequest):
         raise HTTPException(status_code=404, detail="Case not found")
     # Re-validate the stored case snapshot before simulation.
     case = CaseSnapshot(**case_data)
-    results = await engine.run(case, request.runs, request.max_turns, request.mode)
     runs_payload = []
-    for result in results:
+    async for result in engine.run_stream(case, request.runs, request.max_turns, request.mode):
         run_data = model_to_dict(result.run)
         run_repo.add(run_data)
         trace_repo.add(run_data["run_id"], result.trace_bundle)

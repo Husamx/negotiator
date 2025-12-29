@@ -9,15 +9,20 @@ const navLinks = document.querySelectorAll(".nav-link");
 const panels = document.querySelectorAll(".panel");
 const debugToggle = document.getElementById("debugToggle");
 const debugNav = document.getElementById("debugNav");
-const RUN_PREVIEW_WORDS = 5;
-const RUN_PREVIEW_DELAY_MS = 250;
-const RUN_PREVIEW_SWAP_MS = 10000;
+const RUN_PREVIEW_WORDS_MAX = 5;
+const RUN_PREVIEW_DELAY_CAP_MS = 120;
+const RUN_PREVIEW_DELAY_MIN_MS = 30;
+const RUN_PREVIEW_SWAP_MS = 6000;
+const RUN_PREVIEW_POLL_MS = 2000;
 const runPreviewState = {
   active: false,
   summaries: [],
   currentIndex: 0,
   wordTimer: null,
   swapTimer: null,
+  pollTimer: null,
+  expectedRuns: null,
+  completedRuns: 0,
 };
 
 navLinks.forEach((btn) => {
@@ -50,10 +55,14 @@ function updateStatus(message) {
 
 function stopRunPreview() {
   runPreviewState.active = false;
-  if (runPreviewState.wordTimer) clearInterval(runPreviewState.wordTimer);
+  if (runPreviewState.wordTimer) clearTimeout(runPreviewState.wordTimer);
   if (runPreviewState.swapTimer) clearTimeout(runPreviewState.swapTimer);
+  if (runPreviewState.pollTimer) clearInterval(runPreviewState.pollTimer);
   runPreviewState.wordTimer = null;
   runPreviewState.swapTimer = null;
+  runPreviewState.pollTimer = null;
+  runPreviewState.expectedRuns = null;
+  runPreviewState.completedRuns = 0;
 }
 
 function streamPreviewText(text) {
@@ -61,19 +70,21 @@ function streamPreviewText(text) {
   if (!target) return;
   const words = text.split(/\s+/).filter(Boolean);
   let pos = 0;
-  if (runPreviewState.wordTimer) clearInterval(runPreviewState.wordTimer);
-  runPreviewState.wordTimer = setInterval(() => {
-    if (!runPreviewState.active) {
-      clearInterval(runPreviewState.wordTimer);
-      return;
-    }
-    const next = words.slice(0, pos + RUN_PREVIEW_WORDS).join(" ");
-    pos += RUN_PREVIEW_WORDS;
+  if (runPreviewState.wordTimer) clearTimeout(runPreviewState.wordTimer);
+  const tick = () => {
+    if (!runPreviewState.active) return;
+    const step = Math.max(1, Math.floor(Math.random() * RUN_PREVIEW_WORDS_MAX) + 1);
+    const next = words.slice(0, pos + step).join(" ");
+    pos += step;
     target.textContent = `Preview: ${next}`;
-    if (pos >= words.length) {
-      clearInterval(runPreviewState.wordTimer);
-    }
-  }, RUN_PREVIEW_DELAY_MS);
+    if (pos >= words.length) return;
+    const delay = Math.max(
+      RUN_PREVIEW_DELAY_MIN_MS,
+      Math.min(RUN_PREVIEW_DELAY_CAP_MS, Math.round(RUN_PREVIEW_DELAY_CAP_MS / step))
+    );
+    runPreviewState.wordTimer = setTimeout(tick, delay);
+  };
+  tick();
 }
 
 function showNextPreview() {
@@ -86,11 +97,21 @@ function showNextPreview() {
   runPreviewState.swapTimer = setTimeout(showNextPreview, RUN_PREVIEW_SWAP_MS);
 }
 
-async function startRunPreview(caseId) {
+async function startRunPreview(caseId, expectedRuns) {
   stopRunPreview();
   runPreviewState.active = true;
   const target = document.getElementById("runProgress");
   if (target) target.textContent = "Preparing previews...";
+  runPreviewState.expectedRuns = expectedRuns || null;
+  runPreviewState.completedRuns = 0;
+  await refreshRunPreviewSummaries(caseId);
+  runPreviewState.pollTimer = setInterval(() => {
+    refreshRunPreviewSummaries(caseId);
+  }, RUN_PREVIEW_POLL_MS);
+}
+
+async function refreshRunPreviewSummaries(caseId) {
+  const target = document.getElementById("runProgress");
   try {
     const res = await fetch(`/cases/${caseId}/runs`);
     if (!res.ok) throw new Error(await res.text());
@@ -101,15 +122,26 @@ async function startRunPreview(caseId) {
         return run.summary?.summary || run.summary?.summary_text;
       })
       .filter(Boolean);
+    runPreviewState.completedRuns = runs.length;
+    if (target && runPreviewState.expectedRuns) {
+      target.textContent = `Running… ${runPreviewState.completedRuns}/${runPreviewState.expectedRuns} complete`;
+    }
     if (!summaries.length) {
-      if (target) target.textContent = "Running simulations...";
+      if (target && !runPreviewState.expectedRuns) target.textContent = "Running simulations...";
       return;
     }
+    const hadSummaries = runPreviewState.summaries.length > 0;
     runPreviewState.summaries = summaries;
-    runPreviewState.currentIndex = 0;
-    showNextPreview();
+    if (runPreviewState.currentIndex >= summaries.length) {
+      runPreviewState.currentIndex = 0;
+    }
+    if (!hadSummaries) {
+      showNextPreview();
+    }
   } catch (err) {
-    if (target) target.textContent = "Running simulations...";
+    if (target && !runPreviewState.summaries.length) {
+      target.textContent = "Running simulations...";
+    }
   }
 }
 
@@ -1256,7 +1288,7 @@ document.getElementById("runSim").addEventListener("click", async () => {
   const runs = parseInt(document.getElementById("runs").value, 10) || 1;
   const maxTurns = parseInt(document.getElementById("max_turns").value, 10);
   const mode = "FAST";
-  await startRunPreview(state.caseId);
+  await startRunPreview(state.caseId, runs);
   try {
     const res = await fetch(`/cases/${state.caseId}/simulate`, {
       method: "POST",

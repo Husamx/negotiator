@@ -7,7 +7,7 @@ import random
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from app.agents.counterparty import CounterpartyAgent
 from app.agents.prompts import PromptRegistry
@@ -39,6 +39,15 @@ class SimulationEngine:
 
     async def run(self, case: CaseSnapshot, runs: int, max_turns: int, mode: str) -> List[SimulationResult]:
         """Run multiple multi-round simulations for a case (async, parallelized)."""
+        results: List[SimulationResult] = []
+        async for result in self.run_stream(case, runs, max_turns, mode):
+            results.append(result)
+        return results
+
+    async def run_stream(
+        self, case: CaseSnapshot, runs: int, max_turns: int, mode: str
+    ) -> AsyncIterator[SimulationResult]:
+        """Yield simulation results as each run completes."""
         total_runs = max(1, int(runs))
         base_seed = self._base_seed(case.case_id)
         semaphore = asyncio.Semaphore(max(1, int(self.max_parallel)))
@@ -47,8 +56,15 @@ class SimulationEngine:
             async with semaphore:
                 return await self._run_single(case, seed, max_turns)
 
-        tasks = [_run_with_sem(base_seed + offset) for offset in range(total_runs)]
-        return await asyncio.gather(*tasks)
+        tasks = [asyncio.create_task(_run_with_sem(base_seed + offset)) for offset in range(total_runs)]
+        try:
+            for task in asyncio.as_completed(tasks):
+                result = await task
+                yield result
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
 
     async def _run_single(self, case: CaseSnapshot, seed: int, max_turns: int) -> SimulationResult:
         conversation: List[Dict[str, str]] = []
