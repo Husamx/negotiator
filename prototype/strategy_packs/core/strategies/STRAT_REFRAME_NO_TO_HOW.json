@@ -1,0 +1,52 @@
+{
+  "strategy_id": "STRAT_REFRAME_NO_TO_HOW",
+  "revision": 1,
+  "name": "Reframe resistance: 'No' → 'How?'",
+  "category": "DEADLOCK",
+  "tags": [
+    "REFRAME",
+    "QUESTIONS",
+    "DEADLOCK"
+  ],
+  "summary": "When you face 'no' or a hard stop, reframe to problem-solving with 'What would need to be true?' or 'How can we make this work?'",
+  "goal": "Break deadlock while respecting constraints.",
+  "counterparty_guidance": [
+    "Answer with constraints and conditions, not open-ended commitments.",
+    "State what would need to change to make it possible.",
+    "Avoid being cornered into solving their problem for free.",
+    "If needed, restate the no clearly and calmly."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/issues"
+    ]
+  },
+  "preferred_actions": [
+    "REFRAME",
+    "ASK_QUESTION"
+  ],
+  "ui": {
+    "card_title": "Reframe resistance: 'No' → 'How?'",
+    "card_summary": "When you face 'no' or a hard stop, reframe to problem-solving with 'What would need to be true?' or 'How can we make this work?'",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "Getting Past No: Negotiating With Difficult People (Beyond Intractability)",
+    "url": "https://www.beyondintractability.org/bksum/ury-gettingpast"
+  }
+}

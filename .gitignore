@@ -51,3 +51,4 @@ Thumbs.db
 *.db
 *.sqlite3
 .cache/
+t.ipynb

@@ -1,0 +1,51 @@
+{
+  "strategy_id": "STRAT_CALIBRATED_QUESTIONS",
+  "revision": 1,
+  "name": "Calibrated questions (how/what)",
+  "category": "INFORMATION",
+  "tags": [
+    "QUESTIONS",
+    "CALIBRATED"
+  ],
+  "summary": "Use 'how' and 'what' questions to surface constraints and force joint problem solving without direct refusal.",
+  "goal": "Extract key constraints and options while keeping tone collaborative.",
+  "counterparty_guidance": [
+    "Answer without conceding; keep responses bounded and factual.",
+    "Ask reciprocal questions to surface their constraints and BATNA.",
+    "Do not reveal hard limits; frame them as preferences when possible.",
+    "Use pauses and clarification to avoid being led by the question."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/objectives/target"
+    ]
+  },
+  "preferred_actions": [
+    "ASK_QUESTION",
+    "REFRAME"
+  ],
+  "ui": {
+    "card_title": "Calibrated questions (how/what)",
+    "card_summary": "Use 'how' and 'what' questions to surface constraints and force joint problem solving without direct refusal.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "How to Use Calibrated Questions to Negotiate Strategically (MasterClass)",
+    "url": "https://www.masterclass.com/articles/how-to-use-calibrated-questions-to-negotiate-strategically"
+  }
+}

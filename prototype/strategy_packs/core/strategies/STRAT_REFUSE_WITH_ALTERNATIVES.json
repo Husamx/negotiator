@@ -1,0 +1,53 @@
+{
+  "strategy_id": "STRAT_REFUSE_WITH_ALTERNATIVES",
+  "revision": 1,
+  "name": "Principled refusal + alternatives",
+  "category": "RISK_CONTROL",
+  "tags": [
+    "BOUNDARIES",
+    "ALTERNATIVES"
+  ],
+  "summary": "Refuse a request based on a principle/constraint and immediately offer acceptable alternatives.",
+  "goal": "Maintain firmness without escalation and keep negotiation moving.",
+  "counterparty_guidance": [
+    "Evaluate whether their alternatives meet your core needs.",
+    "Propose your own alternatives if theirs are weak.",
+    "Clarify trade-offs rather than accepting a false choice.",
+    "Avoid being boxed into a narrow set of options."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/objectives/reservation",
+      "/batna"
+    ]
+  },
+  "preferred_actions": [
+    "REFUSE",
+    "PROPOSE",
+    "ASK_QUESTION"
+  ],
+  "ui": {
+    "card_title": "Principled refusal + alternatives",
+    "card_summary": "Refuse a request based on a principle/constraint and immediately offer acceptable alternatives.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "Getting to No (PON)",
+    "url": "https://www.pon.harvard.edu/daily/negotiation-skills-daily/getting-to-no/"
+  }
+}

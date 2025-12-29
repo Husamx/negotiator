@@ -1,0 +1,48 @@
+{
+  "strategy_id": "STRAT_CLOSE_AND_COMMIT",
+  "revision": 1,
+  "name": "Close and commit",
+  "category": "CLOSING",
+  "tags": [
+    "CLOSING",
+    "CHECKLIST",
+    "CONFIRMATION"
+  ],
+  "summary": "Convert tentative alignment into a concrete agreement: confirm key terms, resolve open items, and document the commitment and next steps.",
+  "counterparty_guidance": [
+    "Confirm all material terms explicitly; surface hidden conditions before agreeing.",
+    "If they rush closure, slow down and check implementation details.",
+    "Use conditional language (‘subject to…’) when approvals or dependencies exist."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/issues",
+      "/agreement_draft",
+      "/counterparty/authority"
+    ]
+  },
+  "preferred_actions": [
+    "SUMMARIZE",
+    "COMMIT",
+    "DOCUMENT",
+    "SET_PROCESS"
+  ],
+  "ui": {
+    "card_title": "Close and commit",
+    "card_summary": "Lock the deal: confirm terms, remove surprises, and document next steps.",
+    "primary_cta": "Close the deal"
+  },
+  "online_reference": {
+    "title": "5 Dealmaking Tips for Closing the Deal (PON)",
+    "url": "https://www.pon.harvard.edu/daily/dealmaking-daily/5-tips-for-closing-the-deal/"
+  }
+}

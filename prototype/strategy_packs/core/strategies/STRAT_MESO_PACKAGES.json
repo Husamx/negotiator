@@ -1,0 +1,54 @@
+{
+  "strategy_id": "STRAT_MESO_PACKAGES",
+  "revision": 1,
+  "name": "Package deals (MESOs)",
+  "category": "VALUE_CREATE",
+  "tags": [
+    "MESO",
+    "PACKAGING",
+    "TRADEOFFS"
+  ],
+  "summary": "Present 2–3 packages you would accept, each optimized differently, to reveal priorities and move away from single-issue haggling.",
+  "goal": "Increase agreement probability and value by trading across issues instead of fighting on one number.",
+  "counterparty_guidance": [
+    "Evaluate packages for your priorities, not just theirs.",
+    "Do not choose among options if all favor them; propose your own.",
+    "Use packages to surface their preferences and demand balance.",
+    "Ask for a comparison that clarifies trade-offs."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/issues",
+      "/objective_weights",
+      "/objectives/reservation"
+    ]
+  },
+  "preferred_actions": [
+    "PACKAGE_OFFER",
+    "ASK_QUESTION"
+  ],
+  "ui": {
+    "card_title": "Package deals (MESOs)",
+    "card_summary": "Present 2–3 packages you would accept, each optimized differently, to reveal priorities and move away from single-issue haggling.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "MESO Negotiation: The Benefits of Making Multiple Equivalent Simultaneous Offers (PON)",
+    "url": "https://www.pon.harvard.edu/daily/dealmaking-daily/the-benefits-of-multiple-offers/"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "strategy_id": "STRAT_INTRODUCE_NEW_ISSUE",
+  "revision": 1,
+  "name": "Introduce a new issue to create trade space",
+  "category": "VALUE_CREATE",
+  "tags": [
+    "UNBUNDLE",
+    "TRADEOFFS",
+    "PACKAGING"
+  ],
+  "summary": "Add a new negotiable issue (timing, risk, scope, service level) to enable value-creating trades when stuck on one point.",
+  "goal": "Unlock agreement by creating more degrees of freedom.",
+  "counterparty_guidance": [
+    "Assess scope creep and ask why the issue appears now.",
+    "Decide whether to bundle, park, or trade for the new issue.",
+    "If accepted, link it to a concession from their side.",
+    "Avoid expanding the deal without protection."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/issues"
+    ]
+  },
+  "preferred_actions": [
+    "ADD_ISSUE",
+    "ASK_QUESTION",
+    "PACKAGE_OFFER"
+  ],
+  "ui": {
+    "card_title": "Introduce a new issue to create trade space",
+    "card_summary": "Add a new negotiable issue (timing, risk, scope, service level) to enable value-creating trades when stuck on one point.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "Expanding the Pie: Integrative versus Distributive Bargaining (PON)",
+    "url": "https://www.pon.harvard.edu/daily/negotiation-skills-daily/negotiation-skills-expanding-the-pie-integrative-bargaining-versus-distributive-bargaining/"
+  }
+}

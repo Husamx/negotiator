@@ -1,0 +1,52 @@
+{
+  "strategy_id": "STRAT_OBJECTIVE_CRITERIA",
+  "revision": 1,
+  "name": "Anchor on objective criteria",
+  "category": "INFORMATION",
+  "tags": [
+    "OBJECTIVE_CRITERIA",
+    "FAIRNESS"
+  ],
+  "summary": "Shift the conversation from positions to objective standards (market, precedents, benchmarks) and invite agreement on those standards first.",
+  "goal": "Increase legitimacy and reduce friction by negotiating on standards, not personalities.",
+  "counterparty_guidance": [
+    "Test whether the criteria are relevant and comparable.",
+    "Offer alternative benchmarks or data sources.",
+    "Avoid accepting cherry-picked standards.",
+    "Anchor your response to your own objective metrics."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/benchmarks"
+    ]
+  },
+  "preferred_actions": [
+    "REQUEST_JUSTIFICATION",
+    "PROVIDE_JUSTIFICATION",
+    "REFRAME"
+  ],
+  "ui": {
+    "card_title": "Anchor on objective criteria",
+    "card_summary": "Shift the conversation from positions to objective standards (market, precedents, benchmarks) and invite agreement on those standards first.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "Getting to Yes (Wikipedia)",
+    "url": "https://en.wikipedia.org/wiki/Getting_to_Yes"
+  }
+}

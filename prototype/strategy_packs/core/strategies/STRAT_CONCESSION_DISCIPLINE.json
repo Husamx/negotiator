@@ -1,0 +1,53 @@
+{
+  "strategy_id": "STRAT_CONCESSION_DISCIPLINE",
+  "revision": 1,
+  "name": "Concession discipline (trade, don’t give)",
+  "category": "VALUE_CLAIM",
+  "tags": [
+    "CONCESSIONS",
+    "TRADEOFFS"
+  ],
+  "summary": "Ensure every concession is exchanged for something of value and logged in the concession ledger to prevent gradual squeeze.",
+  "goal": "Protect your outcome by making concessions conditional and reciprocal.",
+  "counterparty_guidance": [
+    "Insist on reciprocity for any movement; no free concessions.",
+    "Slow the pace of concessions and link each to a clear trade.",
+    "If they will not trade, pause or restate your limits.",
+    "Track what you have already given to avoid drift."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/objectives/reservation",
+      "/concessions/plan"
+    ]
+  },
+  "preferred_actions": [
+    "CONCEDE",
+    "REQUEST_CONCESSION",
+    "DOCUMENT"
+  ],
+  "ui": {
+    "card_title": "Concession discipline (trade, don’t give)",
+    "card_summary": "Ensure every concession is exchanged for something of value and logged in the concession ledger to prevent gradual squeeze.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "Four Strategies for Making Concessions in Negotiation (PON)",
+    "url": "https://www.pon.harvard.edu/daily/negotiation-skills-daily/four-strategies-for-making-concessions/"
+  }
+}

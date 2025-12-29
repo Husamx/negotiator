@@ -1,0 +1,53 @@
+{
+  "strategy_id": "STRAT_INTERESTS_BEHIND_POSITIONS",
+  "revision": 1,
+  "name": "Interests behind positions",
+  "category": "INFORMATION",
+  "tags": [
+    "INTERESTS",
+    "REFRAME"
+  ],
+  "summary": "When they state a position, ask what problem it solves and negotiate the underlying interests.",
+  "goal": "Create trade space by targeting needs rather than fixed demands.",
+  "counterparty_guidance": [
+    "Share interests selectively; protect sensitive leverage points.",
+    "Ask for their interests and look for tradeable differences.",
+    "Do not abandon your position unless a concrete trade exists.",
+    "Use interests to widen options without conceding value."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/issues",
+      "/interests"
+    ]
+  },
+  "preferred_actions": [
+    "ASK_QUESTION",
+    "SUMMARIZE",
+    "REFRAME"
+  ],
+  "ui": {
+    "card_title": "Interests behind positions",
+    "card_summary": "When they state a position, ask what problem it solves and negotiate the underlying interests.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "Principled Negotiation: Focus on Interests to Create Value (PON)",
+    "url": "https://www.pon.harvard.edu/daily/negotiation-skills-daily/principled-negotiation-focus-interests-create-value/"
+  }
+}

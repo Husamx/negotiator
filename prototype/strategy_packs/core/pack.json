@@ -1,0 +1,99 @@
+{
+  "pack_id": "CORE",
+  "pack_name": "Core Negotiation Strategies",
+  "pack_version": "0.1.0-prototype",
+  "schema_version": "2025-12-v1",
+  "taxonomy_version": "taxonomy-2025-12-v1",
+  "description": "Domain-general strategy library for negot. Contains 30 foundational strategies across setup, information, value creation/claiming, communication, deadlock, multi-party, and risk control.",
+  "author": "negot",
+  "compatibility": {
+    "min_app_version": "0.1.0"
+  },
+  "domains": [
+    "GENERAL"
+  ],
+  "strategies": [
+    {
+      "strategy_id": "STRAT_ANCHOR_JUSTIFY",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_AUTHORITY_PROBE",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_BRACKET_RANGE",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_CALIBRATED_QUESTIONS",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_CLOSE_AND_COMMIT",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_CONCESSION_DISCIPLINE",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_DEFER_AND_SCHEDULE",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_DISCLOSURE_CONTROL",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_INTERESTS_BEHIND_POSITIONS",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_INTRODUCE_NEW_ISSUE",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_MESO_PACKAGES",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_OBJECTIVE_CRITERIA",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_REFRAME_NO_TO_HOW",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_REFUSE_WITH_ALTERNATIVES",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_WALKAWAY_CLEAN",
+      "enabled": true,
+      "weight": 1.0
+    },
+    {
+      "strategy_id": "STRAT_ZOPA_RANGE_MAPPING",
+      "enabled": true,
+      "weight": 1.0
+    }
+  ],
+  "license_notice": "Internal content pack for negot; bibliography references are informational only.",
+  "updated_at": "2025-12-26T16:11:59Z"
+}

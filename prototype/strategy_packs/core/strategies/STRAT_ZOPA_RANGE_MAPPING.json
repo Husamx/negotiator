@@ -1,0 +1,49 @@
+{
+  "strategy_id": "STRAT_ZOPA_RANGE_MAPPING",
+  "revision": 1,
+  "name": "Map ZOPA / bargaining range",
+  "category": "RANGE_SETTING",
+  "tags": [
+    "ZOPA",
+    "BATNA",
+    "RESERVATION_VALUE"
+  ],
+  "summary": "Estimate both sides’ reservation ranges and identify whether a deal zone exists; if not, decide whether you can expand the pie or should walk away.",
+  "counterparty_guidance": [
+    "Avoid revealing your true reservation early; probe for their constraints and alternatives.",
+    "Challenge unrealistic assumptions about the deal zone with objective criteria or new issues.",
+    "If there is no overlap, seek value creation (trade issues) or end talks."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/objectives/target",
+      "/objectives/reservation",
+      "/batna",
+      "/issues"
+    ]
+  },
+  "preferred_actions": [
+    "ASK_QUESTION",
+    "REFRAME",
+    "ADD_ISSUE",
+    "DECLARE_LIMIT"
+  ],
+  "ui": {
+    "card_title": "Map the deal zone (ZOPA)",
+    "card_summary": "Check if an agreement is even possible—and how to expand the zone if not.",
+    "primary_cta": "Map ZOPA"
+  },
+  "online_reference": {
+    "title": "Zone of possible agreement (Wikipedia)",
+    "url": "https://en.wikipedia.org/wiki/Zone_of_possible_agreement"
+  }
+}

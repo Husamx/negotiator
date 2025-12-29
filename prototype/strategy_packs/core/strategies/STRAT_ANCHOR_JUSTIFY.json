@@ -1,0 +1,54 @@
+{
+  "strategy_id": "STRAT_ANCHOR_JUSTIFY",
+  "revision": 1,
+  "name": "Anchor with justification",
+  "category": "VALUE_CLAIM",
+  "tags": [
+    "ANCHORING",
+    "OBJECTIVE_CRITERIA",
+    "HIGH_STAKES"
+  ],
+  "summary": "Make a strong proposal (or counter) as a justified anchor tied to objective criteria, then invite their constraints with a calibrated question.",
+  "goal": "Shift the bargaining range in your favour while staying credible and relationship-safe.",
+  "counterparty_guidance": [
+    "Acknowledge the anchor without accepting the frame; ask for the basis.",
+    "Introduce your own benchmark or counter-anchor tied to your objectives.",
+    "If the anchor is plausible, trade for a concession before agreeing.",
+    "If the anchor is extreme, reframe criteria and narrow the range."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/objectives/target",
+      "/benchmarks",
+      "/objectives/reservation"
+    ]
+  },
+  "preferred_actions": [
+    "PROPOSE",
+    "PROVIDE_JUSTIFICATION",
+    "ASK_QUESTION"
+  ],
+  "ui": {
+    "card_title": "Anchor with justification",
+    "card_summary": "Set a defensible reference point with objective criteria.",
+    "primary_cta": "Generate anchored drafts",
+    "secondary_ctas": [
+      "Gather criteria first",
+      "Create packages instead"
+    ],
+    "icon": "anchor"
+  },
+  "online_reference": {
+    "title": "Using the Anchoring Heuristic to Make Impactful First Offers (PON)",
+    "url": "https://www.pon.harvard.edu/daily/negotiation-skills-daily/anchoring-for-maximum-effect-nb/"
+  }
+}

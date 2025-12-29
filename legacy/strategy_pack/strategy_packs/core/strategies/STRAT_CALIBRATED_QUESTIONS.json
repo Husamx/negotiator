@@ -1,0 +1,191 @@
+{
+  "strategy_id": "STRAT_CALIBRATED_QUESTIONS",
+  "revision": 1,
+  "name": "Calibrated questions (how/what)",
+  "category": "INFORMATION",
+  "subcategories": [],
+  "tags": [
+    "QUESTIONS",
+    "CALIBRATED",
+    "EMAIL",
+    "DM"
+  ],
+  "summary": "Use 'how' and 'what' questions to surface constraints and force joint problem solving without direct refusal.",
+  "goal": "Extract key constraints and options while keeping tone collaborative.",
+  "counterparty_guidance": [
+    "Answer without conceding; keep responses bounded and factual.",
+    "Ask reciprocal questions to surface their constraints and BATNA.",
+    "Do not reveal hard limits; frame them as preferences when possible.",
+    "Use pauses and clarification to avoid being led by the question."
+  ],
+  "rationale": "",
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ],
+    "channels": [
+      "EMAIL",
+      "DM",
+      "IN_PERSON_NOTES"
+    ],
+    "when_to_use": [
+      "Use when you need a structured move to progress the negotiation."
+    ],
+    "when_not_to_use": [
+      "Avoid when facts are missing and you need intake/clarification first."
+    ],
+    "prerequisites": [
+      {
+        "id": "PREREQ_HAS_OBJECTIVES",
+        "description": "Case objectives exist (target/acceptable/walk-away).",
+        "condition": {
+          "type": "PREDICATE",
+          "predicate": {
+            "op": "EXISTS",
+            "path": "/objectives/target"
+          }
+        },
+        "severity": "WARNING",
+        "remediation": "Fill target/acceptable/walk-away in the Strategy Canvas."
+      }
+    ]
+  },
+  "inputs": [
+    {
+      "key": "topic",
+      "label": "Topic you need clarity on",
+      "type": "STRING",
+      "required": true,
+      "bind_to_case_path": "/issues/0/name",
+      "help": "Defaults to the primary issue seeded from your session topic."
+    }
+  ],
+  "steps": [
+    {
+      "step_id": "STEP_VALIDATE",
+      "title": "Validate context and prerequisites",
+      "instruction": "Validate prerequisites, restate the intended move, and identify missing info that would improve execution.",
+      "agent_actions": [
+        {
+          "action": "Load case snapshot",
+          "tool": "RETRIEVE_CASE",
+          "output_key": "case"
+        }
+      ],
+      "outputs": [
+        "PLAN_PATCH"
+      ],
+      "notes": "If blockers exist, return remediation instead of artifacts."
+    },
+    {
+      "step_id": "STEP_EXECUTE",
+      "title": "Execute the strategy",
+      "instruction": "Generate the required artifacts (drafts, packages, checklist) and run critique rubrics before presenting to the user.",
+      "agent_actions": [
+        {
+          "action": "Generate message drafts",
+          "tool": "GENERATE_MESSAGE_DRAFTS",
+          "output_key": "drafts"
+        },
+        {
+          "action": "Critique drafts",
+          "tool": "CRITIQUE_MESSAGE",
+          "output_key": "judge"
+        }
+      ],
+      "outputs": [
+        "MESSAGE_DRAFTS",
+        "DECISION_LOG"
+      ]
+    }
+  ],
+  "scripts": {
+    "snippets": [],
+    "templates": []
+  },
+  "branches": [
+    {
+      "branch_id": "BRANCH_POLICY_WALL",
+      "label": "They cite policy, budget, or fixed constraints",
+      "trigger": {
+        "type": "ANY",
+        "any": [
+          {
+            "type": "PREDICATE",
+            "predicate": {
+              "op": "CONTAINS",
+              "path": "/timeline/recent_events/0/raw_text",
+              "value": "policy"
+            }
+          },
+          {
+            "type": "PREDICATE",
+            "predicate": {
+              "op": "CONTAINS",
+              "path": "/timeline/recent_events/0/raw_text",
+              "value": "budget"
+            }
+          }
+        ]
+      },
+      "recommended_move": {
+        "move_type": "ASK_QUESTION",
+        "instruction": "Acknowledge the constraint and ask what flexibility exists (other issues, timing, structure) before proposing a new trade-off."
+      },
+      "outputs": [
+        "MESSAGE_DRAFTS",
+        "CHECKLIST"
+      ],
+      "risk_notes": "Avoid arguing; pivot to constraints and options."
+    }
+  ],
+  "evaluation": {
+    "rubric_ids": [
+      "RUBRIC_MESSAGE_QUALITY",
+      "RUBRIC_NEGOTIATION_SAFETY"
+    ],
+    "success_criteria": [
+      "Move is explicit and progresses the negotiation.",
+      "Message includes a next step or calibrated question."
+    ],
+    "failure_modes": [
+      "Vague ask.",
+      "Unnecessary disclosure of urgency or bottom line."
+    ],
+    "do_not_do": [
+      "Do not fabricate facts.",
+      "Do not reveal your bottom line unless intentionally walking away."
+    ],
+    "auto_gates": [
+      {
+        "gate_id": "GATE_BOTTOM_LINE_LANGUAGE",
+        "description": "Warn or block if explicit bottom line language is present.",
+        "condition": {
+          "type": "PREDICATE",
+          "predicate": {
+            "op": "MATCHES",
+            "path": "/execution_context/draft_text",
+            "regex": "(minimum|bottom line|final offer)"
+          }
+        },
+        "severity": "WARN"
+      }
+    ]
+  },
+  "ui": {
+    "card_title": "Calibrated questions (how/what)",
+    "card_summary": "Use 'how' and 'what' questions to surface constraints and force joint problem solving without direct refusal.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "references": []
+}

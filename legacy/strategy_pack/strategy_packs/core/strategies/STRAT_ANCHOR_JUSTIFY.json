@@ -1,0 +1,273 @@
+{
+  "strategy_id": "STRAT_ANCHOR_JUSTIFY",
+  "revision": 1,
+  "name": "Anchor with justification",
+  "category": "VALUE_CLAIM",
+  "subcategories": [],
+  "tags": [
+    "ANCHORING",
+    "OBJECTIVE_CRITERIA",
+    "EMAIL",
+    "DM",
+    "HIGH_STAKES"
+  ],
+  "summary": "Make a strong proposal (or counter) as a justified anchor tied to objective criteria, then invite their constraints with a calibrated question.",
+  "goal": "Shift the bargaining range in your favour while staying credible and relationship-safe.",
+  "counterparty_guidance": [
+    "Acknowledge the anchor without accepting the frame; ask for the basis.",
+    "Introduce your own benchmark or counter-anchor tied to your objectives.",
+    "If the anchor is plausible, trade for a concession before agreeing.",
+    "If the anchor is extreme, reframe criteria and narrow the range."
+  ],
+  "rationale": "",
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR"
+    ],
+    "channels": [
+      "EMAIL",
+      "DM",
+      "IN_PERSON_NOTES"
+    ],
+    "when_to_use": [
+      "You can cite at least one objective benchmark or criterion.",
+      "You want to shape the reference point early."
+    ],
+    "when_not_to_use": [
+      "You have no plausible rationale and relationship risk is high.",
+      "You are extremely time-pressured and cannot withstand pushback."
+    ],
+    "prerequisites": [
+      {
+        "id": "PREREQ_HAS_TARGET",
+        "description": "User has target/acceptable/walk-away objectives set.",
+        "condition": {
+          "type": "PREDICATE",
+          "predicate": {
+            "op": "EXISTS",
+            "path": "/objectives/target"
+          }
+        },
+        "severity": "BLOCKER",
+        "remediation": "Set objectives in the Strategy Canvas before anchoring."
+      }
+    ]
+  },
+  "inputs": [
+    {
+      "key": "anchor_value",
+      "label": "Anchor value (proposal)",
+      "type": "STRING",
+      "required": true,
+      "help": "Concrete proposal (number/term) you want to put forward."
+    },
+    {
+      "key": "justification_points",
+      "label": "Justification points",
+      "type": "STRING_LIST",
+      "required": true,
+      "help": "2\u20134 objective bullets supporting the anchor."
+    },
+    {
+      "key": "trade_options",
+      "label": "Trade options (optional)",
+      "type": "STRING_LIST",
+      "required": false,
+      "help": "Optional items you can offer in exchange."
+    }
+  ],
+  "steps": [
+    {
+      "step_id": "STEP_VALIDATE",
+      "title": "Validate context and prerequisites",
+      "instruction": "Validate prerequisites, restate the intended move, and identify missing info that would improve execution.",
+      "agent_actions": [
+        {
+          "action": "Load case snapshot",
+          "tool": "RETRIEVE_CASE",
+          "output_key": "case"
+        }
+      ],
+      "outputs": [
+        "PLAN_PATCH"
+      ],
+      "notes": "If blockers exist, return remediation instead of artifacts."
+    },
+    {
+      "step_id": "STEP_EXECUTE",
+      "title": "Execute the strategy",
+      "instruction": "Generate the required artifacts (drafts, packages, checklist) and run critique rubrics before presenting to the user.",
+      "agent_actions": [
+        {
+          "action": "Generate message drafts",
+          "tool": "GENERATE_MESSAGE_DRAFTS",
+          "output_key": "drafts"
+        },
+        {
+          "action": "Critique drafts",
+          "tool": "CRITIQUE_MESSAGE",
+          "output_key": "judge"
+        }
+      ],
+      "outputs": [
+        "MESSAGE_DRAFTS",
+        "DECISION_LOG"
+      ]
+    }
+  ],
+  "scripts": {
+    "snippets": [
+      {
+        "snippet_id": "SNIP_OPENING_WARM",
+        "label": "Warm opening",
+        "channel": "EMAIL",
+        "tone": "WARM",
+        "text": "Thanks again for the discussion \u2014 I\u2019m keen to find an option that works well for both sides.",
+        "placeholders": []
+      },
+      {
+        "snippet_id": "SNIP_ANCHOR",
+        "label": "Anchor ask",
+        "channel": "EMAIL",
+        "tone": "NEUTRAL",
+        "text": "Based on what we\u2019ve discussed, I\u2019d like to propose {ANCHOR_VALUE}.",
+        "placeholders": [
+          "{ANCHOR_VALUE}"
+        ]
+      },
+      {
+        "snippet_id": "SNIP_JUSTIFY",
+        "label": "Justification intro",
+        "channel": "EMAIL",
+        "tone": "NEUTRAL",
+        "text": "This is grounded in a few objective points:",
+        "placeholders": []
+      },
+      {
+        "snippet_id": "SNIP_CLOSE_Q",
+        "label": "Closing calibrated question",
+        "channel": "EMAIL",
+        "tone": "NEUTRAL",
+        "text": "How does that align with your constraints, and what flexibility do you have on your side?",
+        "placeholders": []
+      }
+    ],
+    "templates": [
+      {
+        "template_id": "TPL_EMAIL_ANCHOR_NEUTRAL",
+        "channel": "EMAIL",
+        "tone": "NEUTRAL",
+        "structure": [
+          {
+            "block": "OPENING",
+            "content_ref": "SNIP_OPENING_WARM"
+          },
+          {
+            "block": "ASK",
+            "content_ref": "SNIP_ANCHOR"
+          },
+          {
+            "block": "JUSTIFICATION",
+            "content_ref": "SNIP_JUSTIFY"
+          },
+          {
+            "block": "NEXT_STEP",
+            "content_ref": "SNIP_CLOSE_Q"
+          }
+        ]
+      }
+    ]
+  },
+  "branches": [
+    {
+      "branch_id": "BRANCH_COUNTERPART_ANCHORS_LOW",
+      "label": "They counter with a much worse term",
+      "trigger": {
+        "type": "ANY",
+        "any": [
+          {
+            "type": "PREDICATE",
+            "predicate": {
+              "op": "CONTAINS",
+              "path": "/timeline/recent_events/0/raw_text",
+              "value": "final"
+            }
+          },
+          {
+            "type": "PREDICATE",
+            "predicate": {
+              "op": "CONTAINS",
+              "path": "/timeline/recent_events/0/raw_text",
+              "value": "best"
+            }
+          }
+        ]
+      },
+      "recommended_move": {
+        "move_type": "RESTATE_CRITERIA",
+        "instruction": "Re-anchor to objective criteria, reject the frame politely, and ask a calibrated question about constraints and decision process."
+      },
+      "outputs": [
+        "MESSAGE_DRAFTS",
+        "CHECKLIST"
+      ],
+      "risk_notes": "Do not get dragged into their number without reframing to criteria."
+    }
+  ],
+  "evaluation": {
+    "rubric_ids": [
+      "RUBRIC_MESSAGE_QUALITY",
+      "RUBRIC_NEGOTIATION_SAFETY"
+    ],
+    "success_criteria": [
+      "Anchor is explicit and concrete.",
+      "Justification is objective and concise.",
+      "Ends with a calibrated question/next step."
+    ],
+    "failure_modes": [
+      "Anchor without rationale in sensitive context.",
+      "Unintended disclosure of minimum/urgency.",
+      "Aggressive tone that triggers defensiveness."
+    ],
+    "do_not_do": [
+      "Do not fabricate benchmarks.",
+      "Do not write your minimum or walk-away in the message."
+    ],
+    "auto_gates": [
+      {
+        "gate_id": "GATE_NO_MINIMUM",
+        "description": "Block sending if explicit minimum/bottom line language appears.",
+        "condition": {
+          "type": "PREDICATE",
+          "predicate": {
+            "op": "MATCHES",
+            "path": "/execution_context/draft_text",
+            "regex": "(my minimum|bottom line|final offer)"
+          }
+        },
+        "severity": "BLOCK_SEND"
+      }
+    ]
+  },
+  "ui": {
+    "card_title": "Anchor with justification",
+    "card_summary": "Set a defensible reference point with objective criteria.",
+    "primary_cta": "Generate anchored drafts",
+    "secondary_ctas": [
+      "Gather criteria first",
+      "Create packages instead"
+    ],
+    "icon": "anchor"
+  },
+  "references": [
+    {
+      "title": "Getting to Yes",
+      "author": "Fisher, Ury, Patton",
+      "notes": "Objective criteria; principled negotiation."
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "strategy_id": "STRAT_WALKAWAY_CLEAN",
+  "revision": 1,
+  "name": "Walk away cleanly (professional exit)",
+  "category": "RISK_CONTROL",
+  "tags": [
+    "WALKAWAY",
+    "BOUNDARY"
+  ],
+  "summary": "If terms are outside your walk-away, exit politely, state the reason at a high level, and leave the door open.",
+  "goal": "Protect your downside while preserving optionality.",
+  "counterparty_guidance": [
+    "Ask whether there is a viable path if they claim they will walk.",
+    "Restate the value of agreement without pleading.",
+    "If the walkaway is real, end respectfully and keep optionality.",
+    "Avoid last-minute giveaways that reset your boundaries."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/objectives/reservation",
+      "/batna"
+    ]
+  },
+  "preferred_actions": [
+    "DECLARE_LIMIT",
+    "REFUSE",
+    "COMMIT"
+  ],
+  "ui": {
+    "card_title": "Walk away cleanly (professional exit)",
+    "card_summary": "If terms are outside your walk-away, exit politely, state the reason at a high level, and leave the door open.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "Best alternative to a negotiated agreement (Wikipedia)",
+    "url": "https://en.wikipedia.org/wiki/Best_alternative_to_a_negotiated_agreement"
+  }
+}

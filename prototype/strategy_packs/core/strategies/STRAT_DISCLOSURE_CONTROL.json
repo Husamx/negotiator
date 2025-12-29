@@ -1,0 +1,48 @@
+{
+  "strategy_id": "STRAT_DISCLOSURE_CONTROL",
+  "revision": 1,
+  "name": "Control information disclosure",
+  "category": "INFORMATION_CONTROL",
+  "tags": [
+    "INFORMATION",
+    "SIGNALING",
+    "RISK"
+  ],
+  "summary": "Share information strategically to create value and trust while protecting leverage-sensitive facts (e.g., true bottom line, privileged constraints).",
+  "counterparty_guidance": [
+    "Probe for specifics and verify claims; don’t rely on vague anchors or unnamed benchmarks.",
+    "Offer reciprocal, low-risk information exchange to build trust.",
+    "If they overshare, avoid exploiting in a way that damages long-term relationship (if relevant)."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/objectives/reservation",
+      "/batna",
+      "/constraints"
+    ]
+  },
+  "preferred_actions": [
+    "ASK_QUESTION",
+    "PROVIDE_JUSTIFICATION",
+    "REFUSE",
+    "SET_PROCESS"
+  ],
+  "ui": {
+    "card_title": "Control disclosure",
+    "card_summary": "Reveal enough to move talks forward—without giving away leverage.",
+    "primary_cta": "Set disclosure plan"
+  },
+  "online_reference": {
+    "title": "When Not to Show Your Hand in Negotiations (PON)",
+    "url": "https://www.pon.harvard.edu/daily/negotiation-skills-daily/when-not-to-show-your-hand/"
+  }
+}

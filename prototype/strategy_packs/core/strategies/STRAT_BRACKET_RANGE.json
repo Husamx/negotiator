@@ -1,0 +1,52 @@
+{
+  "strategy_id": "STRAT_BRACKET_RANGE",
+  "revision": 1,
+  "name": "Bracket strategically",
+  "category": "VALUE_CLAIM",
+  "tags": [
+    "BRACKETING",
+    "ANCHORING"
+  ],
+  "summary": "Use ranges (brackets) to guide the midpoint toward your target while preserving flexibility and reducing confrontation.",
+  "goal": "Improve outcomes by shaping expectations without committing to a single point too early.",
+  "counterparty_guidance": [
+    "Do not split the difference automatically; ask which end is real.",
+    "Counter with your own bracket or a single number tied to criteria.",
+    "Use the range to surface priorities, then narrow the scope.",
+    "Avoid anchoring inside a range that disadvantages you."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/objectives/target",
+      "/objectives/reservation"
+    ]
+  },
+  "preferred_actions": [
+    "COUNTER",
+    "ASK_QUESTION"
+  ],
+  "ui": {
+    "card_title": "Bracket strategically",
+    "card_summary": "Use ranges (brackets) to guide the midpoint toward your target while preserving flexibility and reducing confrontation.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "How to Make the Anchoring Bias Work in Your Favor (PON)",
+    "url": "https://www.pon.harvard.edu/daily/negotiation-skills-daily/in-negotiation-are-two-anchors-better-than-one-nb/"
+  }
+}

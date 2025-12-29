@@ -1,0 +1,55 @@
+﻿{
+  "personas": [
+    {
+      "persona_id": "POLICY_BOUND",
+      "label": "Policy-bound",
+      "dims": {
+        "flexibility": 0.1,
+        "policy_rigidity": 0.9,
+        "cooperativeness": 0.4,
+        "authority_level": 0.6,
+        "time_pressure": 0.3,
+        "batna_strength": 0.7
+      },
+      "behavior": {
+        "acceptance_threshold": 0.75,
+        "stall_probability": 0.2,
+        "escalation_probability": 0.2
+      }
+    },
+    {
+      "persona_id": "COLLABORATIVE",
+      "label": "Collaborative",
+      "dims": {
+        "flexibility": 0.7,
+        "policy_rigidity": 0.3,
+        "cooperativeness": 0.8,
+        "authority_level": 0.5,
+        "time_pressure": 0.4,
+        "batna_strength": 0.4
+      },
+      "behavior": {
+        "acceptance_threshold": 0.55,
+        "stall_probability": 0.1,
+        "escalation_probability": 0.05
+      }
+    },
+    {
+      "persona_id": "HARD_BARGAINER",
+      "label": "Hard bargainer",
+      "dims": {
+        "flexibility": 0.2,
+        "policy_rigidity": 0.6,
+        "cooperativeness": 0.2,
+        "authority_level": 0.7,
+        "time_pressure": 0.2,
+        "batna_strength": 0.8
+      },
+      "behavior": {
+        "acceptance_threshold": 0.85,
+        "stall_probability": 0.25,
+        "escalation_probability": 0.2
+      }
+    }
+  ]
+}

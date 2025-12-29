@@ -1,0 +1,53 @@
+{
+  "strategy_id": "STRAT_DEFER_AND_SCHEDULE",
+  "revision": 1,
+  "name": "Defer and schedule (buy time without losing momentum)",
+  "category": "RISK_CONTROL",
+  "tags": [
+    "TIME",
+    "PROCESS"
+  ],
+  "summary": "When you need time, defer with professionalism, propose a concrete next step, and preserve the frame.",
+  "goal": "Avoid rushed concessions and keep control of timing.",
+  "counterparty_guidance": [
+    "Use the pause to gather data and reduce pressure, not to drift.",
+    "Set a clear next step, deadline, and agenda before ending.",
+    "Confirm what decisions will be made at the next touchpoint.",
+    "Avoid open-ended delays that weaken your position."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/timeline",
+      "/decision_deadlines"
+    ]
+  },
+  "preferred_actions": [
+    "DEFER",
+    "SET_MEETING",
+    "SET_PROCESS"
+  ],
+  "ui": {
+    "card_title": "Defer and schedule (buy time without losing momentum)",
+    "card_summary": "When you need time, defer with professionalism, propose a concrete next step, and preserve the frame.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "How to Negotiate Under Pressure (PON)",
+    "url": "https://www.pon.harvard.edu/daily/negotiation-skills-daily/how-to-negotiate-under-pressure/"
+  }
+}

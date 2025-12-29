@@ -1,0 +1,105 @@
+{
+  "rubric_id": "RUBRIC_MESSAGE_QUALITY",
+  "name": "Message quality (negotiation)",
+  "scale": {
+    "min": 1,
+    "max": 10
+  },
+  "dimensions": [
+    {
+      "dimension_id": "DIM_CLARITY",
+      "label": "Clarity",
+      "description": "The message is easy to understand and not ambiguous about what is being asked.",
+      "anchors": [
+        {
+          "score": 1,
+          "meaning": "Confusing; unclear ask; missing context."
+        },
+        {
+          "score": 5,
+          "meaning": "Mostly clear; minor ambiguity."
+        },
+        {
+          "score": 10,
+          "meaning": "Crystal clear; single reading; explicit ask and next step."
+        }
+      ]
+    },
+    {
+      "dimension_id": "DIM_STRATEGY_ALIGNMENT",
+      "label": "Strategy alignment",
+      "description": "The message follows the chosen strategy (anchor, question-first, packaging, etc.).",
+      "anchors": [
+        {
+          "score": 1,
+          "meaning": "Contradicts strategy; undermines position."
+        },
+        {
+          "score": 5,
+          "meaning": "Partially aligned; could be tighter."
+        },
+        {
+          "score": 10,
+          "meaning": "Fully aligned; consistent move sequence."
+        }
+      ]
+    },
+    {
+      "dimension_id": "DIM_TONE",
+      "label": "Tone",
+      "description": "Tone matches risk profile and channel; firm without being antagonistic unless intentionally.",
+      "anchors": [
+        {
+          "score": 1,
+          "meaning": "Hostile/pleading/inappropriate."
+        },
+        {
+          "score": 5,
+          "meaning": "Acceptable; some rough edges."
+        },
+        {
+          "score": 10,
+          "meaning": "Professional, calibrated, relationship-safe."
+        }
+      ]
+    },
+    {
+      "dimension_id": "DIM_JUSTIFICATION",
+      "label": "Justification",
+      "description": "Uses objective criteria or credible rationale where appropriate.",
+      "anchors": [
+        {
+          "score": 1,
+          "meaning": "No rationale; purely subjective."
+        },
+        {
+          "score": 5,
+          "meaning": "Some rationale; could be more objective."
+        },
+        {
+          "score": 10,
+          "meaning": "Strong objective support; concise and relevant."
+        }
+      ]
+    },
+    {
+      "dimension_id": "DIM_NEXT_STEP",
+      "label": "Next step control",
+      "description": "Asks a calibrated question or proposes a clear next step with timing.",
+      "anchors": [
+        {
+          "score": 1,
+          "meaning": "No next step; leaves ball in the air."
+        },
+        {
+          "score": 5,
+          "meaning": "Some next step; not specific."
+        },
+        {
+          "score": 10,
+          "meaning": "Clear next step with question or scheduling suggestion."
+        }
+      ]
+    }
+  ]
+}

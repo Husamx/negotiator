@@ -1,0 +1,51 @@
+{
+  "strategy_id": "STRAT_AUTHORITY_PROBE",
+  "revision": 1,
+  "name": "Authority probing",
+  "category": "INFORMATION",
+  "tags": [
+    "AUTHORITY",
+    "PROCESS"
+  ],
+  "summary": "Identify who can approve terms and what the decision process is to avoid late-stage surprises.",
+  "goal": "Prevent last-minute 'I need to check' delays and negotiate with the real decision-maker.",
+  "counterparty_guidance": [
+    "Clarify your decision process without over-disclosing internal limits.",
+    "State who decides and what inputs matter, then ask about their authority.",
+    "Avoid committing until the right stakeholders are aligned.",
+    "Propose a clear next step to move the decision forward."
+  ],
+  "applicability": {
+    "domains": [
+      "GENERAL",
+      "RENT_HOUSING",
+      "PROCUREMENT_VENDOR",
+      "JOB_OFFER_COMP",
+      "SERVICES_CONTRACTOR",
+      "PERSONAL_FAMILY"
+    ]
+  },
+  "requires": {
+    "case_fields": [
+      "/counterparty/decision_process"
+    ]
+  },
+  "preferred_actions": [
+    "ASK_QUESTION",
+    "SET_PROCESS"
+  ],
+  "ui": {
+    "card_title": "Authority probing",
+    "card_summary": "Identify who can approve terms and what the decision process is to avoid late-stage surprises.",
+    "primary_cta": "Run strategy",
+    "secondary_ctas": [
+      "Edit plan",
+      "Generate variants"
+    ],
+    "icon": "sparkles"
+  },
+  "online_reference": {
+    "title": "In Negotiation, How Much Authority Do They Have? (PON)",
+    "url": "https://www.pon.harvard.edu/daily/business-negotiations/how-much-authority-do-they-have/"
+  }
+}
