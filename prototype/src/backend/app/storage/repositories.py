@@ -52,6 +52,27 @@ class CaseRepository:
             return None
         return safe_json_loads(row["data"])
 
+    def list(self) -> List[Dict[str, Any]]:
+        """List all case snapshots (newest first)."""
+        conn = get_connection()
+        rows = conn.execute("SELECT data FROM cases ORDER BY created_at DESC").fetchall()
+        conn.close()
+        return [safe_json_loads(row["data"]) for row in rows]
+
+    def delete_many(self, case_ids: List[str]) -> int:
+        """Delete cases by id. Returns the count removed."""
+        if not case_ids:
+            return 0
+        placeholders = ",".join(["?"] * len(case_ids))
+        conn = get_connection()
+        cur = conn.execute(
+            f"DELETE FROM cases WHERE case_id IN ({placeholders})",
+            tuple(case_ids),
+        )
+        conn.commit()
+        conn.close()
+        return cur.rowcount or 0
+
 
 class RunRepository:
     def add(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -90,6 +111,16 @@ class RunRepository:
             return None
         return safe_json_loads(row["data"])
 
+    def delete_for_case(self, case_id: str) -> List[str]:
+        """Delete runs for a case and return run_ids removed."""
+        conn = get_connection()
+        rows = conn.execute("SELECT run_id FROM runs WHERE case_id = ?", (case_id,)).fetchall()
+        run_ids = [row["run_id"] for row in rows]
+        conn.execute("DELETE FROM runs WHERE case_id = ?", (case_id,))
+        conn.commit()
+        conn.close()
+        return run_ids
+
 
 class TraceRepository:
     def add(self, run_id: str, trace_bundle: Dict[str, Any]) -> None:
@@ -124,3 +155,17 @@ class TraceRepository:
             "turn_traces": safe_json_loads(row["turn_traces"]),
             "agent_call_traces": safe_json_loads(row["agent_call_traces"]),
         }
+
+    def delete_for_runs(self, run_ids: List[str]) -> int:
+        """Delete traces for a list of run_ids."""
+        if not run_ids:
+            return 0
+        placeholders = ",".join(["?"] * len(run_ids))
+        conn = get_connection()
+        cur = conn.execute(
+            f"DELETE FROM traces WHERE run_id IN ({placeholders})",
+            tuple(run_ids),
+        )
+        conn.commit()
+        conn.close()
+        return cur.rowcount or 0

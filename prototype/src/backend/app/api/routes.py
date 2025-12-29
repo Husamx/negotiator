@@ -3,6 +3,7 @@
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Body, HTTPException
+from pydantic import BaseModel
 
 from app.analytics.insights import compute_insights
 from app.core.models import CalibrationRequest, CaseSnapshot, SimulationRequest
@@ -12,6 +13,8 @@ from app.simulation.engine import SimulationEngine
 from app.storage.repositories import CaseRepository, RunRepository, TraceRepository
 from app.agents.prompts import PromptRegistry
 from app.agents.world import WorldAgent
+from app.agents.counterparty_hints import CounterpartyHintsAgent
+from app.core.counterparty_controls import control_definitions_by_id
 
 router = APIRouter()
 
@@ -21,10 +24,15 @@ trace_repo = TraceRepository()
 strategy_registry = StrategyRegistry()
 prompt_registry = PromptRegistry()
 engine = SimulationEngine(strategy_registry, prompt_registry)
+counterparty_hints_agent = CounterpartyHintsAgent(prompt_registry)
 
 
 class CaseUpdate(CaseSnapshot):
     pass
+
+
+class CaseDeleteRequest(BaseModel):
+    case_ids: List[str]
 
 
 @router.get("/strategies")
@@ -79,6 +87,32 @@ def get_case(case_id: str):
     return existing
 
 
+@router.get("/cases")
+def list_cases():
+    """List all saved cases (full snapshots)."""
+    return case_repo.list()
+
+
+@router.post("/cases/delete")
+def delete_cases(payload: CaseDeleteRequest):
+    """Delete saved cases and associated runs/traces."""
+    case_ids = payload.case_ids or []
+    if not case_ids:
+        return {"deleted_cases": 0, "deleted_runs": 0, "deleted_traces": 0}
+    deleted_cases = case_repo.delete_many(case_ids)
+    deleted_runs_total = 0
+    deleted_traces_total = 0
+    for case_id in case_ids:
+        run_ids = run_repo.delete_for_case(case_id)
+        deleted_runs_total += len(run_ids)
+        deleted_traces_total += trace_repo.delete_for_runs(run_ids)
+    return {
+        "deleted_cases": deleted_cases,
+        "deleted_runs": deleted_runs_total,
+        "deleted_traces": deleted_traces_total,
+    }
+
+
 @router.post("/cases/{case_id}/persona/calibrate")
 def calibrate_persona(case_id: str, calibration: CalibrationRequest):
     """Calibrate persona distribution and update the case snapshot.
@@ -92,11 +126,37 @@ def calibrate_persona(case_id: str, calibration: CalibrationRequest):
     weights = case.get("counterparty_assumptions", {}).get("persona_distribution") or []
     if not weights:
         weights = [{"persona_id": "GENERIC", "weight": 1.0}]
-    case["counterparty_assumptions"]["calibration"] = {"answers": calibration.calibration.answers}
+    raw_answers = calibration.calibration.answers or {}
+    answers = {key: value for key, value in raw_answers.items() if value and value != "unknown"}
+    case["counterparty_assumptions"]["calibration"] = {"answers": answers}
     case["counterparty_assumptions"]["persona_distribution"] = [model_to_dict(w) for w in weights]
     case["revision"] = case.get("revision", 0) + 1
     case_repo.update(case)
-    return {"persona_distribution": [model_to_dict(w) for w in weights]}
+    control_defs = control_definitions_by_id()
+    control_lines = []
+    for control_id, value in answers.items():
+        definition = control_defs.get(control_id, {})
+        label = definition.get("label", control_id)
+        desc = definition.get("definition", "")
+        if desc:
+            control_lines.append(f"- {label}: {desc} Value: {value}")
+        else:
+            control_lines.append(f"- {label}: Value: {value}")
+    controls_text = "None" if not control_lines else "\n".join(control_lines)
+    return {
+        "counterparty_controls_summary": f"counterparty_controls:\n{controls_text}",
+    }
+
+
+@router.get("/cases/{case_id}/counterparty/hints")
+async def counterparty_hints(case_id: str):
+    """Generate case-specific examples for counterparty controls."""
+    case_data = case_repo.get(case_id)
+    if not case_data:
+        raise HTTPException(status_code=404, detail="Case not found")
+    case = CaseSnapshot(**case_data)
+    hints_payload = await counterparty_hints_agent.generate(case)
+    return hints_payload
 
 
 @router.post("/cases/{case_id}/simulate")

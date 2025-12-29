@@ -16,7 +16,6 @@
         <nav>
           <button class="nav-link" data-target="case">Case Setup</button>
           <button class="nav-link" data-target="counterparty">Counterparty</button>
-          <button class="nav-link" data-target="controls">Controls</button>
           <button class="nav-link" data-target="simulate">Simulate</button>
           <button class="nav-link" data-target="insights">Insights</button>
           <button class="nav-link" data-target="strategies">Strategies (Advanced)</button>
@@ -35,12 +34,12 @@
           <h1>Case Setup</h1>
           <div class="panel-grid">
             <div>
-              <label>Topic</label>
+              <label>Topic <span class="hint-icon" data-tooltip="Describe the real-world situation and what is being negotiated.">?</span></label>
               <textarea id="topic" rows="2" placeholder="Describe the negotiation topic"></textarea>
             </div>
             <div class="row">
               <div>
-                <label>Domain</label>
+                <label>Domain <span class="hint-icon" data-tooltip="Sets the negotiation type and shapes the agent prompts.">?</span></label>
                 <select id="domain">
                   <option value="GENERAL">GENERAL</option>
                   <option value="JOB_OFFER_COMP">JOB_OFFER_COMP</option>
@@ -50,7 +49,7 @@
                 </select>
               </div>
               <div>
-                <label>Channel</label>
+                <label>Channel <span class="hint-icon" data-tooltip="How the negotiation happens (email, in-person, DM, etc.).">?</span></label>
                 <select id="channel">
                   <option value="UNSPECIFIED">UNSPECIFIED</option>
                   <option value="IN_PERSON">IN_PERSON</option>
@@ -62,7 +61,7 @@
 
             <div class="section">
               <div class="section-header">
-                <h2>Issues (User)</h2>
+                <h2>Issues (User) <span class="hint-icon" data-tooltip="The items you care about and want to maximize or minimize.">?</span></h2>
                 <button id="addUserIssue" type="button">Add User Issue</button>
               </div>
               <div class="editor-grid" id="userIssuesEditor"></div>
@@ -70,7 +69,7 @@
 
             <div class="section">
               <div class="section-header">
-                <h2>Issues (Counterparty)</h2>
+                <h2>Issues (Counterparty) <span class="hint-icon" data-tooltip="The items the other side cares about (as you understand them).">?</span></h2>
                 <button id="addCounterpartyIssue" type="button">Add Counterparty Issue</button>
               </div>
               <div class="editor-grid" id="counterpartyIssuesEditor"></div>
@@ -78,9 +77,9 @@
 
             <div class="section">
               <div class="section-header">
-                <h2>Objectives</h2>
+                <h2>Objectives <span class="hint-icon" data-tooltip="Your target outcome and minimum acceptable outcome.">?</span></h2>
                 <div class="inline-field">
-                  <label>Objective Type</label>
+                  <label>Objective Type <span class="hint-icon" data-tooltip="Choose a single overall target or a per-issue target/reservation.">?</span></label>
                   <select id="objectiveType">
                     <option value="OFFER_VECTOR">OFFER_VECTOR</option>
                     <option value="SINGLE_VALUE">SINGLE_VALUE</option>
@@ -91,31 +90,31 @@
               <div id="objectiveSingleSection" class="editor-grid" hidden>
                 <div class="editor-row single-row">
                   <div>
-                    <label>Target value</label>
+                    <label>Target value <span class="hint-icon" data-tooltip="Your ideal outcome if everything goes well.">?</span></label>
                     <input type="text" id="objectiveTargetSingle" />
                   </div>
                   <div>
-                    <label>Reservation value</label>
+                    <label>Reservation value <span class="hint-icon" data-tooltip="Your minimum acceptable outcome before you walk away.">?</span></label>
                     <input type="text" id="objectiveReservationSingle" />
                   </div>
                 </div>
               </div>
-              <label class="checkbox">
-                <input type="checkbox" id="noDealAcceptable" />
-                No-deal acceptable
-              </label>
             </div>
 
             <div class="section">
               <div class="section-header">
-                <h2>Parameters</h2>
+                <h2>Parameters <span class="hint-icon" data-tooltip="Constraints or preferences that guide the user's behavior.">?</span></h2>
                 <button id="addParameter">Add Parameter</button>
               </div>
               <div class="editor-grid" id="parametersEditor"></div>
             </div>
 
             <div class="actions">
+              <select id="sampleCaseSelect" aria-label="Sample case"></select>
               <button id="loadSample">Load Sample Case</button>
+              <select id="savedCaseSelect" aria-label="Saved case" multiple size="4"></select>
+              <button id="loadSavedCase">Load Saved Case</button>
+              <button id="deleteSavedCases">Delete Selected</button>
               <button id="createCase" class="primary">Create Case</button>
               <button id="validateCase">Validate</button>
             </div>
@@ -130,78 +129,69 @@
               <div>
                 <label>Policy Rigidity</label>
                 <select id="policyRigidity">
+                  <option value="unknown" selected>I don't know</option>
                   <option value="low">Low</option>
-                  <option value="medium" selected>Medium</option>
+                  <option value="medium">Medium</option>
                   <option value="high">High</option>
                 </select>
+                <div class="hint" data-control-id="policy_rigidity">
+                  <div class="hint-definition"></div>
+                  <div class="hint-example"></div>
+                </div>
               </div>
               <div>
                 <label>Cooperativeness</label>
                 <select id="cooperativeness">
+                  <option value="unknown" selected>I don't know</option>
                   <option value="low">Low</option>
-                  <option value="medium" selected>Medium</option>
+                  <option value="medium">Medium</option>
                   <option value="high">High</option>
                 </select>
+                <div class="hint" data-control-id="cooperativeness">
+                  <div class="hint-definition"></div>
+                  <div class="hint-example"></div>
+                </div>
               </div>
             </div>
             <div class="row">
               <div>
                 <label>Time Pressure</label>
                 <select id="timePressure">
+                  <option value="unknown" selected>I don't know</option>
                   <option value="low">Low</option>
-                  <option value="medium" selected>Medium</option>
+                  <option value="medium">Medium</option>
                   <option value="high">High</option>
                 </select>
+                <div class="hint" data-control-id="time_pressure">
+                  <div class="hint-definition"></div>
+                  <div class="hint-example"></div>
+                </div>
               </div>
               <div>
                 <label>Authority Clarity</label>
                 <select id="authorityClarity">
+                  <option value="unknown" selected>I don't know</option>
                   <option value="low">Low</option>
-                  <option value="medium" selected>Medium</option>
+                  <option value="medium">Medium</option>
                   <option value="high">High</option>
                 </select>
+                <div class="hint" data-control-id="authority_clarity">
+                  <div class="hint-definition"></div>
+                  <div class="hint-example"></div>
+                </div>
               </div>
             </div>
             <div class="actions">
               <button id="calibratePersona" class="primary">Calibrate Persona</button>
             </div>
             <pre id="personaDistribution" class="output"></pre>
+            <div class="status" id="counterpartyHintStatus"></div>
           </div>
         </section>
 
-        <section id="controls" class="panel">
-          <h1>Controls</h1>
+        <section id="simulate" class="panel">
+          <h1>Simulate</h1>
           <div class="panel-grid">
-            <div class="grid-3">
-              <div>
-                <label>Outcome vs Agreement</label>
-                <input type="range" min="0" max="1" step="0.1" id="outcome_vs_agreement" />
-              </div>
-              <div>
-                <label>Speed vs Thoroughness</label>
-                <input type="range" min="0" max="1" step="0.1" id="speed_vs_thoroughness" />
-              </div>
-              <div>
-                <label>Risk Tolerance</label>
-                <input type="range" min="0" max="1" step="0.1" id="risk_tolerance" />
-              </div>
-              <div>
-                <label>Relationship Sensitivity</label>
-                <input type="range" min="0" max="1" step="0.1" id="relationship_sensitivity" />
-              </div>
-              <div>
-                <label>Info Sharing</label>
-                <input type="range" min="0" max="1" step="0.1" id="info_sharing" />
-              </div>
-              <div>
-                <label>Creativity vs Discipline</label>
-                <input type="range" min="0" max="1" step="0.1" id="creativity_vs_discipline" />
-              </div>
-              <div>
-                <label>Constraint Confidence</label>
-                <input type="range" min="0" max="1" step="0.1" id="constraint_confidence" />
-              </div>
-            </div>
             <div class="row">
               <div>
                 <label>Runs</label>
@@ -211,23 +201,7 @@
                 <label>Max Turns</label>
                 <input type="number" id="max_turns" min="1" value="8" />
               </div>
-              <div>
-                <label>Mode</label>
-                <select id="mode">
-                  <option value="FAST">FAST</option>
-                  <option value="DETAILED">DETAILED</option>
-                </select>
-              </div>
             </div>
-            <div class="actions">
-              <button id="saveControls" class="primary">Save Controls</button>
-            </div>
-          </div>
-        </section>
-
-        <section id="simulate" class="panel">
-          <h1>Simulate</h1>
-          <div class="panel-grid">
             <div class="actions">
               <button id="runSim" class="primary">Run Simulations</button>
             </div>
@@ -248,19 +222,34 @@
               <h2>Outcome Distribution</h2>
               <div class="bar-chart" id="outcomeChart"></div>
             </div>
-            <div class="insights-section split triple">
-              <div>
-                <h2>PASS Insights</h2>
-                <div class="insight-list" id="bucketPass"></div>
+            <div class="insights-buckets" id="insightsBuckets">
+              <div class="insights-section split triple" id="insightsColumns">
+                <div class="insights-column" data-bucket="PASS">
+                  <h2>PASS Insights</h2>
+                  <div class="insight-list" id="bucketPass"></div>
+                </div>
+                <div class="insights-column" data-bucket="NEUTRAL">
+                  <h2>NEUTRAL Insights</h2>
+                  <div class="insight-list" id="bucketNeutral"></div>
+                </div>
+                <div class="insights-column" data-bucket="FAIL">
+                  <h2>FAIL Insights</h2>
+                  <div class="insight-list" id="bucketFail"></div>
+                </div>
               </div>
-              <div>
-                <h2>NEUTRAL Insights</h2>
-                <div class="insight-list" id="bucketNeutral"></div>
-              </div>
-              <div>
-                <h2>FAIL Insights</h2>
-                <div class="insight-list" id="bucketFail"></div>
-              </div>
+              <aside class="insight-detail" id="insightDetail" hidden>
+                <div class="insight-detail-header">
+                  <button id="closeInsightDetail">Back to insights</button>
+                  <div class="insight-detail-title" id="insightDetailTitle"></div>
+                  <div class="insight-detail-meta" id="insightDetailMeta"></div>
+                </div>
+                <div class="insight-detail-controls">
+                  <label>Example runs</label>
+                  <select id="insightRunSelect"></select>
+                </div>
+                <div class="insight-detail-snippets" id="insightDetailSnippets"></div>
+                <div class="conversation" id="insightConversation"></div>
+              </aside>
             </div>
             <details class="insights-raw">
               <summary>Raw Insights JSON</summary>

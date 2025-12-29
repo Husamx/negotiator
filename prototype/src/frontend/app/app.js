@@ -9,6 +9,16 @@ const navLinks = document.querySelectorAll(".nav-link");
 const panels = document.querySelectorAll(".panel");
 const debugToggle = document.getElementById("debugToggle");
 const debugNav = document.getElementById("debugNav");
+const RUN_PREVIEW_WORDS = 5;
+const RUN_PREVIEW_DELAY_MS = 250;
+const RUN_PREVIEW_SWAP_MS = 10000;
+const runPreviewState = {
+  active: false,
+  summaries: [],
+  currentIndex: 0,
+  wordTimer: null,
+  swapTimer: null,
+};
 
 navLinks.forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -28,11 +38,79 @@ function setActivePanel(id) {
   panels.forEach((panel) => {
     panel.classList.toggle("active", panel.id === id);
   });
+  if (id === "counterparty") {
+    loadCounterpartyHints();
+  }
 }
 
 function updateStatus(message) {
   const el = document.getElementById("caseStatus");
   el.textContent = message;
+}
+
+function stopRunPreview() {
+  runPreviewState.active = false;
+  if (runPreviewState.wordTimer) clearInterval(runPreviewState.wordTimer);
+  if (runPreviewState.swapTimer) clearTimeout(runPreviewState.swapTimer);
+  runPreviewState.wordTimer = null;
+  runPreviewState.swapTimer = null;
+}
+
+function streamPreviewText(text) {
+  const target = document.getElementById("runProgress");
+  if (!target) return;
+  const words = text.split(/\s+/).filter(Boolean);
+  let pos = 0;
+  if (runPreviewState.wordTimer) clearInterval(runPreviewState.wordTimer);
+  runPreviewState.wordTimer = setInterval(() => {
+    if (!runPreviewState.active) {
+      clearInterval(runPreviewState.wordTimer);
+      return;
+    }
+    const next = words.slice(0, pos + RUN_PREVIEW_WORDS).join(" ");
+    pos += RUN_PREVIEW_WORDS;
+    target.textContent = `Preview: ${next}`;
+    if (pos >= words.length) {
+      clearInterval(runPreviewState.wordTimer);
+    }
+  }, RUN_PREVIEW_DELAY_MS);
+}
+
+function showNextPreview() {
+  if (!runPreviewState.active || !runPreviewState.summaries.length) return;
+  const summary = runPreviewState.summaries[runPreviewState.currentIndex];
+  runPreviewState.currentIndex =
+    (runPreviewState.currentIndex + 1) % runPreviewState.summaries.length;
+  streamPreviewText(summary);
+  if (runPreviewState.swapTimer) clearTimeout(runPreviewState.swapTimer);
+  runPreviewState.swapTimer = setTimeout(showNextPreview, RUN_PREVIEW_SWAP_MS);
+}
+
+async function startRunPreview(caseId) {
+  stopRunPreview();
+  runPreviewState.active = true;
+  const target = document.getElementById("runProgress");
+  if (target) target.textContent = "Preparing previews...";
+  try {
+    const res = await fetch(`/cases/${caseId}/runs`);
+    if (!res.ok) throw new Error(await res.text());
+    const runs = await res.json();
+    const summaries = (runs || [])
+      .map((run) => {
+        if (typeof run.summary === "string") return run.summary;
+        return run.summary?.summary || run.summary?.summary_text;
+      })
+      .filter(Boolean);
+    if (!summaries.length) {
+      if (target) target.textContent = "Running simulations...";
+      return;
+    }
+    runPreviewState.summaries = summaries;
+    runPreviewState.currentIndex = 0;
+    showNextPreview();
+  } catch (err) {
+    if (target) target.textContent = "Running simulations...";
+  }
 }
 
 function formatJson(obj) {
@@ -72,16 +150,76 @@ function parseParamValue(valueType, raw) {
   return trimmed;
 }
 
+const COUNTERPARTY_HINT_DEFS = {
+  policy_rigidity: {
+    label: "Policy Rigidity",
+    definition: "How strictly the counterparty sticks to internal rules, bands, or approvals.",
+    seedExample: "Policy caps base salary at $130k, so we can adjust bonus but not base.",
+  },
+  cooperativeness: {
+    label: "Cooperativeness",
+    definition: "How collaborative vs guarded the counterparty's tone and posture are.",
+    seedExample: "We want a package that works for both sides and can trade across components.",
+  },
+  time_pressure: {
+    label: "Time Pressure",
+    definition: "How urgent the counterparty is to reach a decision and close.",
+    seedExample: "We need to finalize by Friday to stay on the hiring timeline.",
+  },
+  authority_clarity: {
+    label: "Authority Clarity",
+    definition: "How clear the approval path is and whether the counterparty can commit.",
+    seedExample: "I can approve base, but equity needs CFO sign-off.",
+  },
+};
+
+function renderCounterpartyHints(examples = {}) {
+  document.querySelectorAll(".hint[data-control-id]").forEach((el) => {
+    const controlId = el.dataset.controlId;
+    const def = COUNTERPARTY_HINT_DEFS[controlId];
+    if (!def) return;
+    const definitionEl = el.querySelector(".hint-definition");
+    const exampleEl = el.querySelector(".hint-example");
+    if (definitionEl) definitionEl.textContent = def.definition;
+    const example = examples[controlId] || def.seedExample;
+    if (exampleEl) exampleEl.textContent = `Example: ${example}`;
+  });
+}
+
+async function loadCounterpartyHints() {
+  renderCounterpartyHints();
+  if (!state.caseId) return;
+  const status = document.getElementById("counterpartyHintStatus");
+  if (status) status.textContent = "Generating examples...";
+  try {
+    const res = await fetch(`/cases/${state.caseId}/counterparty/hints`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    const examples = {};
+    (data?.hints || []).forEach((hint) => {
+      if (hint?.control_id && hint?.example) {
+        examples[hint.control_id] = hint.example;
+      }
+    });
+    renderCounterpartyHints(examples);
+    if (status) status.textContent = "Examples updated.";
+  } catch (err) {
+    if (status) status.textContent = `Examples unavailable: ${err.message}`;
+  }
+}
+
+const DEFAULT_CONTROLS = {
+  outcome_vs_agreement: 0.5,
+  speed_vs_thoroughness: 0.5,
+  risk_tolerance: 0.5,
+  relationship_sensitivity: 0.5,
+  info_sharing: 0.5,
+  creativity_vs_discipline: 0.5,
+  constraint_confidence: 0.5,
+};
+
 function getControlsFromInputs() {
-  return {
-    outcome_vs_agreement: parseFloat(document.getElementById("outcome_vs_agreement").value || 0.5),
-    speed_vs_thoroughness: parseFloat(document.getElementById("speed_vs_thoroughness").value || 0.5),
-    risk_tolerance: parseFloat(document.getElementById("risk_tolerance").value || 0.5),
-    relationship_sensitivity: parseFloat(document.getElementById("relationship_sensitivity").value || 0.5),
-    info_sharing: parseFloat(document.getElementById("info_sharing").value || 0.5),
-    creativity_vs_discipline: parseFloat(document.getElementById("creativity_vs_discipline").value || 0.5),
-    constraint_confidence: parseFloat(document.getElementById("constraint_confidence").value || 0.5),
-  };
+  return { ...DEFAULT_CONTROLS };
 }
 
 const userIssuesEditor = document.getElementById("userIssuesEditor");
@@ -90,6 +228,8 @@ const parametersEditor = document.getElementById("parametersEditor");
 const objectiveVectorSection = document.getElementById("objectiveVectorSection");
 const objectiveSingleSection = document.getElementById("objectiveSingleSection");
 const objectiveType = document.getElementById("objectiveType");
+const sampleCaseSelect = document.getElementById("sampleCaseSelect");
+const savedCaseSelect = document.getElementById("savedCaseSelect");
 
 function createIssueRow(issue = {}, onChange = null) {
   const row = document.createElement("div");
@@ -349,7 +489,6 @@ function renderObjectiveInputs() {
 
 function collectObjectives() {
   const type = objectiveType.value;
-  const noDealAcceptable = document.getElementById("noDealAcceptable").checked;
   const issues = collectUserIssues();
   const issueWeights = {};
 
@@ -360,7 +499,6 @@ function collectObjectives() {
     return {
       target: { type, value: parseValue(targetRaw) },
       reservation: { type, value: parseValue(reservationRaw) },
-      no_deal_acceptable: noDealAcceptable,
       issue_weights: issueWeights,
     };
   }
@@ -380,7 +518,6 @@ function collectObjectives() {
   return {
     target: { type, value: target },
     reservation: { type, value: reservation },
-    no_deal_acceptable: noDealAcceptable,
     issue_weights: issueWeights,
   };
 }
@@ -469,9 +606,24 @@ function setParameters(params) {
   }
 }
 
+function collectCalibrationAnswers() {
+  const fields = {
+    policy_rigidity: document.getElementById("policyRigidity").value,
+    cooperativeness: document.getElementById("cooperativeness").value,
+    time_pressure: document.getElementById("timePressure").value,
+    authority_clarity: document.getElementById("authorityClarity").value,
+  };
+  const answers = {};
+  Object.entries(fields).forEach(([key, value]) => {
+    if (value && value !== "unknown") {
+      answers[key] = value;
+    }
+  });
+  return answers;
+}
+
 function setObjectives(objectives) {
   objectiveType.value = objectives.target?.type || "OFFER_VECTOR";
-  document.getElementById("noDealAcceptable").checked = !!objectives.no_deal_acceptable;
 
   if (objectiveType.value === "SINGLE_VALUE") {
     document.getElementById("objectiveTargetSingle").value = objectives.target?.value ?? "";
@@ -492,56 +644,502 @@ function setObjectives(objectives) {
   }
 }
 
-function loadSampleCase() {
-  const sampleIssues = [
-    {
-      issue_id: "salary",
-      name: "Base Salary",
-      type: "SALARY",
-      direction: "MAXIMIZE",
-      unit: "USD",
-      bounds: { min: 140000, max: 160000 },
+const SAMPLE_CASES = [
+  {
+    id: "job_offer",
+    label: "Job Offer: Base Salary Negotiation",
+    topic:
+      "You are negotiating a job offer by email. You have market research and a clear minimum base salary, but you do not know the employer's exact budget.",
+    domain: "JOB_OFFER_COMP",
+    channel: "EMAIL",
+    user_issues: [
+      {
+        issue_id: "salary",
+        name: "Base Salary",
+        type: "SALARY",
+        direction: "MAXIMIZE",
+        unit: "USD",
+        bounds: { min: 140000, max: 160000 },
+      },
+    ],
+    counterparty_issues: [
+      {
+        issue_id: "salary",
+        name: "Base Salary",
+        type: "SALARY",
+        direction: "MINIMIZE",
+        unit: "USD",
+        bounds: { min: 110000, max: 130000 },
+      },
+    ],
+    objectives: {
+      target: { type: "OFFER_VECTOR", value: { salary: 140000 } },
+      reservation: { type: "OFFER_VECTOR", value: { salary: 120000 } },
+      issue_weights: { salary: 1.0 },
     },
-  ];
-  const sampleCounterpartyIssues = [
-    {
-      issue_id: "salary",
-      name: "Base Salary",
-      type: "SALARY",
-      direction: "MINIMIZE",
-      unit: "USD",
-      bounds: { min: 110000, max: 130000 },
+    parameters: [
+      {
+        param_id: "P_MIN_BASE",
+        label: "Minimum base salary",
+        value_type: "MONEY",
+        value: 120000,
+        class: "NON_NEGOTIABLE",
+        disclosure: "PRIVATE",
+        allow_rethink_suggestions: false,
+        applies_to: { scope: "OFFER", issue_id: "salary" },
+      },
+    ],
+  },
+  {
+    id: "roommates",
+    label: "Roommates: Boyfriend Visits + Cleaning",
+    topic:
+      "You are burdened by Ava's boyfriend, Mike, frequently staying over and leaving shared areas messy.",
+    domain: "GENERAL",
+    channel: "IN_PERSON",
+    user_issues: [
+      {
+        issue_id: "cleaning",
+        name: "Cleaning Standards",
+        type: "OTHER",
+        direction: "MAXIMIZE",
+        unit: "text",
+        bounds: { min: "clean after", max: "clean the whole place" },
+      },
+    ],
+    counterparty_issues: [
+      {
+        issue_id: "bf_stayover",
+        name: "Boyfriend Stay-Overs",
+        type: "OTHER",
+        direction: "MAXIMIZE",
+        unit: "text",
+        bounds: { min: "stay over", max: "stay over more often" },
+      },
+    ],
+    objectives: {
+      target: {
+        type: "SINGLE_VALUE",
+        value: "No boyfriend stays over; if he visits, he cleans immediately and leaves no mess.",
+      },
+      reservation: {
+        type: "SINGLE_VALUE",
+        value: "Visits are limited and he cleans shared areas after each visit.",
+      },
+      issue_weights: { cleaning: 1.0 },
     },
-  ];
-  const sampleObjectives = {
-    target: { type: "OFFER_VECTOR", value: { salary: 140000 } },
-    reservation: { type: "OFFER_VECTOR", value: { salary: 120000 } },
-    no_deal_acceptable: false,
-    issue_weights: { salary: 1.0 },
-  };
-  const sampleParameters = [
-    {
-      param_id: "P_MIN_BASE",
-      label: "Minimum base salary",
-      value_type: "MONEY",
-      value: 120000,
-      class: "NON_NEGOTIABLE",
-      disclosure: "PRIVATE",
-      allow_rethink_suggestions: false,
-      applies_to: { scope: "OFFER", issue_id: "salary" },
+    parameters: [],
+  },
+  {
+    id: "ai_regulation",
+    label: "Tech: Global AI Regulation",
+    topic:
+      "Debate whether there should be global regulations for AI development. You are a master's student with academic readings but limited industry data.",
+    domain: "GENERAL",
+    channel: "IN_PERSON",
+    user_issues: [
+      {
+        issue_id: "ai_regulation",
+        name: "Global AI Regulation Stance",
+        type: "OTHER",
+        direction: "MAXIMIZE",
+        unit: "text",
+      },
+    ],
+    counterparty_issues: [
+      {
+        issue_id: "ai_regulation",
+        name: "Global AI Regulation Stance",
+        type: "OTHER",
+        direction: "MINIMIZE",
+        unit: "text",
+      },
+    ],
+    objectives: {
+      target: {
+        type: "SINGLE_VALUE",
+        value: "Support global safety regulations with independent audits.",
+      },
+      reservation: {
+        type: "SINGLE_VALUE",
+        value: "Support voluntary guidelines and transparency reports.",
+      },
+      issue_weights: { ai_regulation: 1.0 },
     },
-  ];
-  document.getElementById("topic").value = "Negotiate job offer compensation";
-  document.getElementById("domain").value = "JOB_OFFER_COMP";
-  document.getElementById("channel").value = "EMAIL";
+    parameters: [],
+  },
+  {
+    id: "pineapple_pizza",
+    label: "Food: Pineapple on Pizza",
+    topic:
+      "Debate whether pineapple belongs on pizza. You are a TikToker who reviews food trends and cares about taste reactions.",
+    domain: "GENERAL",
+    channel: "DM",
+    user_issues: [
+      {
+        issue_id: "pineapple_pizza",
+        name: "Pizza Topping Stance",
+        type: "OTHER",
+        direction: "MAXIMIZE",
+        unit: "text",
+      },
+    ],
+    counterparty_issues: [
+      {
+        issue_id: "pineapple_pizza",
+        name: "Pizza Topping Stance",
+        type: "OTHER",
+        direction: "MINIMIZE",
+        unit: "text",
+      },
+    ],
+    objectives: {
+      target: {
+        type: "SINGLE_VALUE",
+        value: "Pineapple belongs for sweet-salty contrast.",
+      },
+      reservation: {
+        type: "SINGLE_VALUE",
+        value: "Pineapple is fine as an optional topping.",
+      },
+      issue_weights: { pineapple_pizza: 1.0 },
+    },
+    parameters: [],
+  },
+  {
+    id: "kids_social_media",
+    label: "Social Media: Under 13 Ban",
+    topic:
+      "Debate whether children under 13 should be banned from social media. You are a concerned parent with personal experience but limited policy knowledge.",
+    domain: "GENERAL",
+    channel: "IN_PERSON",
+    user_issues: [
+      {
+        issue_id: "under13_social",
+        name: "Under-13 Social Media Policy",
+        type: "OTHER",
+        direction: "MAXIMIZE",
+        unit: "text",
+      },
+    ],
+    counterparty_issues: [
+      {
+        issue_id: "under13_social",
+        name: "Under-13 Social Media Policy",
+        type: "OTHER",
+        direction: "MINIMIZE",
+        unit: "text",
+      },
+    ],
+    objectives: {
+      target: {
+        type: "SINGLE_VALUE",
+        value: "Support a ban for under-13s with strict enforcement.",
+      },
+      reservation: {
+        type: "SINGLE_VALUE",
+        value: "Require verified parental consent and time limits.",
+      },
+      issue_weights: { under13_social: 1.0 },
+    },
+    parameters: [],
+  },
+  {
+    id: "tipping_culture",
+    label: "Tipping Culture: Replace with Wages",
+    topic:
+      "Debate whether tipping should be abolished in favor of higher base wages. You are from the UK and find US tipping norms confusing.",
+    domain: "GENERAL",
+    channel: "IN_PERSON",
+    user_issues: [
+      {
+        issue_id: "tipping_policy",
+        name: "Tipping Policy",
+        type: "OTHER",
+        direction: "MAXIMIZE",
+        unit: "text",
+      },
+    ],
+    counterparty_issues: [
+      {
+        issue_id: "tipping_policy",
+        name: "Tipping Policy",
+        type: "OTHER",
+        direction: "MINIMIZE",
+        unit: "text",
+      },
+    ],
+    objectives: {
+      target: {
+        type: "SINGLE_VALUE",
+        value: "Abolish tipping and pay living wages.",
+      },
+      reservation: {
+        type: "SINGLE_VALUE",
+        value: "Include a service charge by default.",
+      },
+      issue_weights: { tipping_policy: 1.0 },
+    },
+    parameters: [],
+  },
+  {
+    id: "dating_apps",
+    label: "Dating Apps vs Traditional Courtship",
+    topic:
+      "Debate whether dating apps have broken modern romance. You are a frustrated dater with app burnout and want healthier alternatives.",
+    domain: "GENERAL",
+    channel: "DM",
+    user_issues: [
+      {
+        issue_id: "dating_apps",
+        name: "Dating Approach",
+        type: "OTHER",
+        direction: "MAXIMIZE",
+        unit: "text",
+      },
+    ],
+    counterparty_issues: [
+      {
+        issue_id: "dating_apps",
+        name: "Dating Approach",
+        type: "OTHER",
+        direction: "MINIMIZE",
+        unit: "text",
+      },
+    ],
+    objectives: {
+      target: {
+        type: "SINGLE_VALUE",
+        value: "Apps harm romance; return to traditional courtship.",
+      },
+      reservation: {
+        type: "SINGLE_VALUE",
+        value: "Limit apps and prioritize in-person connections.",
+      },
+      issue_weights: { dating_apps: 1.0 },
+    },
+    parameters: [],
+  },
+  {
+    id: "freelance_contract",
+    label: "Freelance Contract: Fee + Timeline",
+    topic:
+      "You are a freelance designer negotiating a project fee and delivery timeline by email. You know your minimum fee but not the client's budget.",
+    domain: "SERVICES_CONTRACTOR",
+    channel: "EMAIL",
+    user_issues: [
+      {
+        issue_id: "fee",
+        name: "Project Fee",
+        type: "PRICE",
+        direction: "MAXIMIZE",
+        unit: "USD",
+        bounds: { min: 4500, max: 7000 },
+      },
+      {
+        issue_id: "timeline",
+        name: "Delivery Timeline",
+        type: "DATE",
+        direction: "MINIMIZE",
+        unit: "days",
+        bounds: { min: 14, max: 30 },
+      },
+    ],
+    counterparty_issues: [
+      {
+        issue_id: "fee",
+        name: "Project Fee",
+        type: "PRICE",
+        direction: "MINIMIZE",
+        unit: "USD",
+        bounds: { min: 3000, max: 5500 },
+      },
+      {
+        issue_id: "timeline",
+        name: "Delivery Timeline",
+        type: "DATE",
+        direction: "MAXIMIZE",
+        unit: "days",
+        bounds: { min: 21, max: 45 },
+      },
+    ],
+    objectives: {
+      target: { type: "OFFER_VECTOR", value: { fee: 6000, timeline: 21 } },
+      reservation: { type: "OFFER_VECTOR", value: { fee: 4500, timeline: 30 } },
+      issue_weights: { fee: 0.7, timeline: 0.3 },
+    },
+    parameters: [
+      {
+        param_id: "P_MIN_FEE",
+        label: "Minimum project fee",
+        value_type: "MONEY",
+        value: 4500,
+        class: "NON_NEGOTIABLE",
+        disclosure: "PRIVATE",
+        allow_rethink_suggestions: false,
+        applies_to: { scope: "OFFER", issue_id: "fee" },
+      },
+    ],
+  },
+];
 
-  setUserIssues(sampleIssues);
-  setCounterpartyIssues(sampleCounterpartyIssues);
-  setObjectives(sampleObjectives);
-  setParameters(sampleParameters);
+function populateSampleCaseSelect() {
+  if (!sampleCaseSelect) return;
+  sampleCaseSelect.innerHTML = "";
+  SAMPLE_CASES.forEach((sample) => {
+    const option = document.createElement("option");
+    option.value = sample.id;
+    option.textContent = sample.label;
+    sampleCaseSelect.appendChild(option);
+  });
+}
+
+function applySampleCase(sample) {
+  if (!sample) return;
+  document.getElementById("topic").value = sample.topic;
+  document.getElementById("domain").value = sample.domain;
+  document.getElementById("channel").value = sample.channel;
+  setUserIssues(sample.user_issues);
+  setCounterpartyIssues(sample.counterparty_issues);
+  setObjectives(sample.objectives);
+  setParameters(sample.parameters);
+}
+
+function loadSampleCase() {
+  const selectedId = sampleCaseSelect?.value || SAMPLE_CASES[0]?.id;
+  const sample = SAMPLE_CASES.find((item) => item.id === selectedId) || SAMPLE_CASES[0];
+  applySampleCase(sample);
 }
 
 document.getElementById("loadSample").addEventListener("click", loadSampleCase);
+
+function setCounterpartyControlsFromCase(caseData) {
+  const answers = caseData?.counterparty_assumptions?.calibration?.answers || {};
+  const defaults = {
+    policy_rigidity: "unknown",
+    cooperativeness: "unknown",
+    time_pressure: "unknown",
+    authority_clarity: "unknown",
+  };
+  const values = { ...defaults, ...answers };
+  const policyEl = document.getElementById("policyRigidity");
+  const coopEl = document.getElementById("cooperativeness");
+  const timeEl = document.getElementById("timePressure");
+  const authEl = document.getElementById("authorityClarity");
+  if (policyEl) policyEl.value = values.policy_rigidity || "unknown";
+  if (coopEl) coopEl.value = values.cooperativeness || "unknown";
+  if (timeEl) timeEl.value = values.time_pressure || "unknown";
+  if (authEl) authEl.value = values.authority_clarity || "unknown";
+}
+
+function applySavedCase(caseData) {
+  if (!caseData) return;
+  document.getElementById("topic").value = caseData.topic || "";
+  document.getElementById("domain").value = caseData.domain || "GENERAL";
+  document.getElementById("channel").value = caseData.channel || "UNSPECIFIED";
+  setUserIssues(caseData.user_issues || caseData.issues || []);
+  setCounterpartyIssues(caseData.counterparty_issues || caseData.issues || []);
+  if (caseData.objectives) {
+    setObjectives(caseData.objectives);
+  } else {
+    renderObjectiveInputs();
+  }
+  setParameters(caseData.parameters || []);
+  setCounterpartyControlsFromCase(caseData);
+  state.caseId = caseData.case_id || null;
+  state.caseData = caseData;
+  updateStatus(state.caseId ? `Loaded case: ${state.caseId}` : "Loaded case.");
+}
+
+function populateSavedCaseSelect(cases = []) {
+  if (!savedCaseSelect) return;
+  savedCaseSelect.innerHTML = "";
+  if (!cases.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No saved cases";
+    savedCaseSelect.appendChild(option);
+    return;
+  }
+  cases.forEach((caseItem) => {
+    const option = document.createElement("option");
+    option.value = caseItem.case_id;
+    const title = caseItem.topic || "Untitled case";
+    const status = caseItem.status || "DRAFT";
+    const domain = caseItem.domain || "GENERAL";
+    const shortId = caseItem.case_id ? caseItem.case_id.slice(0, 8) : "unknown";
+    option.textContent = `${title} · ${domain} · ${status} · ${shortId}`;
+    savedCaseSelect.appendChild(option);
+  });
+}
+
+async function refreshSavedCases() {
+  if (!savedCaseSelect) return;
+  try {
+    const res = await fetch("/cases");
+    if (!res.ok) throw new Error(await res.text());
+    const cases = await res.json();
+    populateSavedCaseSelect(cases || []);
+  } catch (err) {
+    populateSavedCaseSelect([]);
+  }
+}
+
+document.getElementById("loadSavedCase").addEventListener("click", async () => {
+  if (!savedCaseSelect) return;
+  const selected = Array.from(savedCaseSelect.selectedOptions)
+    .map((option) => option.value)
+    .filter(Boolean);
+  if (!selected.length) {
+    updateStatus("No saved case selected.");
+    return;
+  }
+  if (selected.length > 1) {
+    updateStatus("Select a single saved case to load.");
+    return;
+  }
+  const caseId = selected[0];
+  try {
+    const res = await fetch(`/cases/${caseId}`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    applySavedCase(data);
+  } catch (err) {
+    updateStatus(`Error: ${err.message}`);
+  }
+});
+
+document.getElementById("deleteSavedCases").addEventListener("click", async () => {
+  if (!savedCaseSelect) return;
+  const selected = Array.from(savedCaseSelect.selectedOptions)
+    .map((option) => option.value)
+    .filter(Boolean);
+  if (!selected.length) {
+    updateStatus("Select one or more cases to delete.");
+    return;
+  }
+  const confirmed = window.confirm(`Delete ${selected.length} case(s)? This cannot be undone.`);
+  if (!confirmed) return;
+  try {
+    const res = await fetch("/cases/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ case_ids: selected }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    if (selected.includes(state.caseId)) {
+      state.caseId = null;
+      state.caseData = null;
+    }
+    updateStatus(
+      `Deleted ${data.deleted_cases || 0} case(s), ${data.deleted_runs || 0} run(s), ${data.deleted_traces || 0} trace(s).`
+    );
+    refreshSavedCases();
+  } catch (err) {
+    updateStatus(`Error: ${err.message}`);
+  }
+});
 
 const addUserIssueButton = document.getElementById("addUserIssue");
 if (addUserIssueButton) {
@@ -620,6 +1218,7 @@ createCaseBtn.addEventListener("click", async () => {
     state.caseId = data.case_id;
     state.caseData = data;
     updateStatus(`Case created: ${state.caseId}`);
+    refreshSavedCases();
   } catch (err) {
     updateStatus(`Error: ${err.message}`);
   }
@@ -635,36 +1234,18 @@ document.getElementById("calibratePersona").addEventListener("click", async () =
     updateStatus("Create a case first.");
     return;
   }
-  const answers = {
-    policy_rigidity: document.getElementById("policyRigidity").value || "medium",
-    cooperativeness: document.getElementById("cooperativeness").value || "medium",
-    time_pressure: document.getElementById("timePressure").value || "medium",
-    authority_clarity: document.getElementById("authorityClarity").value || "medium",
-  };
+  const answers = collectCalibrationAnswers();
   const res = await fetch(`/cases/${state.caseId}/persona/calibrate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ calibration: { answers } }),
   });
   const data = await res.json();
-  state.personaDistribution = data.persona_distribution;
-  document.getElementById("personaDistribution").textContent = formatJson(data);
-});
-
-document.getElementById("saveControls").addEventListener("click", async () => {
-  if (!state.caseId) {
-    updateStatus("Create a case first.");
-    return;
+  if (data.persona_distribution) {
+    state.personaDistribution = data.persona_distribution;
   }
-  const controls = getControlsFromInputs();
-  const res = await fetch(`/cases/${state.caseId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ controls }),
-  });
-  const data = await res.json();
-  state.caseData = data;
-  updateStatus("Controls saved.");
+  const summary = data.counterparty_controls_summary;
+  document.getElementById("personaDistribution").textContent = summary || formatJson(data);
 });
 
 document.getElementById("runSim").addEventListener("click", async () => {
@@ -674,17 +1255,24 @@ document.getElementById("runSim").addEventListener("click", async () => {
   }
   const runs = parseInt(document.getElementById("runs").value, 10) || 1;
   const maxTurns = parseInt(document.getElementById("max_turns").value, 10);
-  const mode = document.getElementById("mode").value;
-  document.getElementById("runProgress").textContent = "Running...";
-  const res = await fetch(`/cases/${state.caseId}/simulate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ runs, max_turns: maxTurns, mode }),
-  });
-  const data = await res.json();
-  state.runs = data;
-  renderRuns();
-  document.getElementById("runProgress").textContent = `Completed ${data.length} runs.`;
+  const mode = "FAST";
+  await startRunPreview(state.caseId);
+  try {
+    const res = await fetch(`/cases/${state.caseId}/simulate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runs, max_turns: maxTurns, mode }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    state.runs = data;
+    renderRuns();
+    stopRunPreview();
+    document.getElementById("runProgress").textContent = `Completed ${data.length} runs.`;
+  } catch (err) {
+    stopRunPreview();
+    document.getElementById("runProgress").textContent = `Error: ${err.message}`;
+  }
 });
 
 function renderRuns() {
@@ -703,17 +1291,21 @@ document.getElementById("loadInsights").addEventListener("click", async () => {
     updateStatus("Create a case first.");
     return;
   }
+  const status = document.getElementById("insightsStatus");
+  const button = document.getElementById("loadInsights");
+  if (status) status.textContent = "Loading insights...";
+  if (button) button.disabled = true;
   try {
     const res = await fetch(`/cases/${state.caseId}/insights`);
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     document.getElementById("insightsOutput").textContent = formatJson(data);
     renderInsights(data);
-    const status = document.getElementById("insightsStatus");
     if (status) status.textContent = `Loaded ${data?.turns_to_termination?.length || 0} runs.`;
   } catch (err) {
-    const status = document.getElementById("insightsStatus");
     if (status) status.textContent = `Error: ${err.message}`;
+  } finally {
+    if (button) button.disabled = false;
   }
 });
 
@@ -746,9 +1338,18 @@ document.getElementById("loadTrace").addEventListener("click", async () => {
   renderTraceFlow(data);
 });
 
+const closeInsightButton = document.getElementById("closeInsightDetail");
+if (closeInsightButton) {
+  closeInsightButton.addEventListener("click", closeInsightDetail);
+}
+
+populateSampleCaseSelect();
 loadSampleCase();
+renderCounterpartyHints();
+refreshSavedCases();
 
 function renderInsights(data) {
+  closeInsightDetail();
   renderOutcomeSummary(data);
   renderOutcomeChart(data);
   renderBucketInsights(data);
@@ -822,12 +1423,12 @@ function renderBucketInsights(data) {
   failEl.innerHTML = "";
 
   const buckets = data?.bucket_insights || {};
-  renderBucketList(passEl, buckets.PASS, "No PASS insights yet.");
-  renderBucketList(neutralEl, buckets.NEUTRAL, "No NEUTRAL insights yet.");
-  renderBucketList(failEl, buckets.FAIL, "No FAIL insights yet.");
+  renderBucketList(passEl, buckets.PASS, "No PASS insights yet.", "PASS");
+  renderBucketList(neutralEl, buckets.NEUTRAL, "No NEUTRAL insights yet.", "NEUTRAL");
+  renderBucketList(failEl, buckets.FAIL, "No FAIL insights yet.", "FAIL");
 }
 
-function renderBucketList(container, bucketData, emptyText) {
+function renderBucketList(container, bucketData, emptyText, bucketLabel) {
   const insights = bucketData?.insights || [];
   if (!insights.length) {
     container.textContent = emptyText;
@@ -843,7 +1444,107 @@ function renderBucketList(container, bucketData, emptyText) {
       <div class="insight-row-meta">Support ${item.support_count || 0}</div>
       ${exampleText ? `<div class="insight-row-meta">${exampleText}</div>` : ""}
     `;
+    row.addEventListener("click", () => openInsightDetail(bucketLabel, item));
     container.appendChild(row);
+  });
+}
+
+function openInsightDetail(bucketLabel, item) {
+  const wrapper = document.getElementById("insightsBuckets");
+  const detail = document.getElementById("insightDetail");
+  const titleEl = document.getElementById("insightDetailTitle");
+  const metaEl = document.getElementById("insightDetailMeta");
+  const snippetsEl = document.getElementById("insightDetailSnippets");
+  const runSelect = document.getElementById("insightRunSelect");
+  if (!wrapper || !detail || !runSelect) return;
+  wrapper.classList.add("active");
+  wrapper.dataset.activeBucket = bucketLabel;
+  detail.hidden = false;
+  if (titleEl) titleEl.textContent = item.claim || "";
+  if (metaEl) metaEl.textContent = `${bucketLabel} • Support ${item.support_count || 0}`;
+  if (snippetsEl) {
+    snippetsEl.innerHTML = "";
+    const snippets = Array.isArray(item.example_snippets) ? item.example_snippets : [];
+    if (!snippets.length) {
+      snippetsEl.textContent = "No example snippets available.";
+    } else {
+      snippets.forEach((snippet) => {
+        const line = document.createElement("div");
+        line.textContent = snippet;
+        snippetsEl.appendChild(line);
+      });
+    }
+  }
+
+  const runIds = Array.isArray(item.example_run_ids) ? item.example_run_ids : [];
+  runSelect.innerHTML = "";
+  if (!runIds.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No example runs";
+    runSelect.appendChild(option);
+    runSelect.disabled = true;
+    renderInsightConversation([]);
+    return;
+  }
+  runSelect.disabled = false;
+  runIds.forEach((runId, idx) => {
+    const option = document.createElement("option");
+    option.value = runId;
+    option.textContent = `Run ${idx + 1} · ${runId.slice(0, 8)}`;
+    runSelect.appendChild(option);
+  });
+  runSelect.onchange = () => {
+    if (runSelect.value) {
+      loadInsightConversation(runSelect.value);
+    }
+  };
+  loadInsightConversation(runIds[0]);
+}
+
+function closeInsightDetail() {
+  const wrapper = document.getElementById("insightsBuckets");
+  const detail = document.getElementById("insightDetail");
+  const runSelect = document.getElementById("insightRunSelect");
+  if (wrapper) {
+    wrapper.classList.remove("active");
+    delete wrapper.dataset.activeBucket;
+  }
+  if (detail) detail.hidden = true;
+  if (runSelect) runSelect.onchange = null;
+  renderInsightConversation([]);
+}
+
+async function loadInsightConversation(runId) {
+  const container = document.getElementById("insightConversation");
+  if (!container) return;
+  container.textContent = "Loading conversation...";
+  try {
+    const res = await fetch(`/runs/${runId}/trace`);
+    if (!res.ok) throw new Error(await res.text());
+    const trace = await res.json();
+    const turns = trace?.turn_traces || [];
+    renderInsightConversation(turns);
+  } catch (err) {
+    container.textContent = `Unable to load conversation: ${err.message}`;
+  }
+}
+
+function renderInsightConversation(turns) {
+  const container = document.getElementById("insightConversation");
+  if (!container) return;
+  container.innerHTML = "";
+  if (!turns || !turns.length) {
+    container.textContent = "No conversation available.";
+    return;
+  }
+  turns.forEach((turn) => {
+    const speaker = turn.speaker;
+    if (speaker !== "USER" && speaker !== "COUNTERPARTY") return;
+    const bubble = document.createElement("div");
+    bubble.className = `bubble ${speaker === "USER" ? "user" : "counterparty"}`;
+    bubble.textContent = turn.message_text || "";
+    container.appendChild(bubble);
   });
 }
 

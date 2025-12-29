@@ -46,6 +46,17 @@ class UIConfigOutput(BaseModel):
     controls_ui: Dict[str, Any] = Field(default_factory=dict)
 
 
+class CounterpartyHint(BaseModel):
+    control_id: str
+    label: str
+    definition: str
+    example: str
+
+
+class CounterpartyHintExamplesOutput(BaseModel):
+    examples: Dict[str, str] = Field(default_factory=dict)
+
+
 class RoleplayOutput(BaseModel):
     action: AgentAction
     message_text: str

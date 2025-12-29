@@ -146,6 +146,60 @@ label {
   margin-bottom: 6px;
 }
 
+.hint-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: #efe6d8;
+  color: #4b4238;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: help;
+  position: relative;
+  vertical-align: middle;
+}
+
+.hint-icon::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1c1a16;
+  color: #f5efe6;
+  padding: 6px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.3;
+  max-width: 240px;
+  width: max-content;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+  z-index: 5;
+}
+
+.hint-icon::before {
+  content: "";
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #1c1a16;
+  opacity: 0;
+}
+
+.hint-icon:hover::after,
+.hint-icon:hover::before {
+  opacity: 1;
+}
+
 textarea,
 input,
 select {
@@ -198,6 +252,14 @@ button:hover {
   overflow-x: auto;
 }
 
+.editor-grid#objectiveSingleSection {
+  overflow: visible;
+}
+
+.editor-row.single-row {
+  overflow: visible;
+}
+
 .editor-row {
   display: grid;
   gap: 10px;
@@ -235,6 +297,23 @@ button:hover {
 .status {
   font-size: 14px;
   color: var(--muted);
+}
+
+.hint {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px dashed #e4d9c9;
+  background: #fffaf1;
+  font-size: 12px;
+  color: var(--muted);
+  display: grid;
+  gap: 4px;
+}
+
+.hint-example {
+  color: #4b4238;
+  font-style: italic;
 }
 
 .output {
@@ -411,6 +490,97 @@ button:hover {
 
 .insights-section.split.triple {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.insights-buckets {
+  display: grid;
+  gap: 16px;
+}
+
+.insights-buckets.active {
+  grid-template-columns: minmax(240px, 360px) minmax(320px, 1fr);
+  align-items: start;
+}
+
+.insights-buckets.active .insights-column {
+  display: none;
+}
+
+.insights-buckets[data-active-bucket="PASS"].active .insights-column[data-bucket="PASS"],
+.insights-buckets[data-active-bucket="NEUTRAL"].active .insights-column[data-bucket="NEUTRAL"],
+.insights-buckets[data-active-bucket="FAIL"].active .insights-column[data-bucket="FAIL"] {
+  display: block;
+}
+
+.insight-detail {
+  background: #f7f3eb;
+  border: 1px solid #e5dccd;
+  border-radius: 16px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.insight-detail-header {
+  display: grid;
+  gap: 6px;
+}
+
+.insight-detail-controls {
+  display: grid;
+  gap: 6px;
+}
+
+.insight-detail-title {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.insight-detail-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.insight-detail-snippets {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.conversation {
+  display: grid;
+  gap: 10px;
+}
+
+.conversation .bubble {
+  padding: 10px 12px;
+  border-radius: 14px;
+  max-width: 78%;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.conversation .bubble.user {
+  justify-self: start;
+  background: #fffaf1;
+  border: 1px solid #e8dfd2;
+}
+
+.conversation .bubble.counterparty {
+  justify-self: end;
+  background: #e8f3ff;
+  border: 1px solid #d4e3f6;
+}
+
+.insight-row {
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.insight-row:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px rgba(29, 27, 22, 0.1);
 }
 
 .insight-list {

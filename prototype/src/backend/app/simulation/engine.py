@@ -14,6 +14,7 @@ from app.agents.prompts import PromptRegistry
 from app.agents.user_proxy import UserProxyAgent
 from app.agents.world import WorldAgent
 from app.core.config import MAX_PARALLEL_RUNS
+from app.core.counterparty_controls import control_definitions_by_id
 from app.core.models import CaseSnapshot, IssueDirection, Outcome, SimulationRun, Turn
 from app.core.utils import model_to_dict
 from app.services.strategy_registry import StrategyRegistry
@@ -304,13 +305,25 @@ class SimulationEngine:
 
     def _counterparty_summary(self, case: CaseSnapshot) -> str:
         calibration = case.counterparty_assumptions.calibration.answers or {}
-        personas = case.counterparty_assumptions.persona_distribution or []
-        persona_lines = [f"{p.persona_id}: {p.weight}" for p in personas]
         notes = case.counterparty_assumptions.notes or ""
+        control_defs = control_definitions_by_id()
+        control_lines = []
+        for control_id, value in calibration.items():
+            if value in (None, "", "unknown"):
+                continue
+            definition = control_defs.get(control_id, {})
+            label = definition.get("label", control_id)
+            desc = definition.get("definition", "")
+            if desc:
+                control_lines.append(f"- {label}: {desc} Value: {value}")
+            else:
+                control_lines.append(f"- {label}: Value: {value}")
+        controls_text = "None" if not control_lines else "\n".join(control_lines)
         return "\n".join(
             [
                 f"calibration_answers: {calibration}",
-                f"persona_distribution: {', '.join(persona_lines)}" if persona_lines else "persona_distribution: []",
+                "counterparty_controls:",
+                controls_text,
                 f"notes: {notes}",
             ]
         )
