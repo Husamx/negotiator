@@ -101,7 +101,9 @@ async function startRunPreview(caseId, expectedRuns) {
   stopRunPreview();
   runPreviewState.active = true;
   const target = document.getElementById("runProgress");
+  const meta = document.getElementById("runProgressMeta");
   if (target) target.textContent = "Preparing previews...";
+  if (meta) meta.textContent = "";
   runPreviewState.expectedRuns = expectedRuns || null;
   runPreviewState.completedRuns = 0;
   await refreshRunPreviewSummaries(caseId);
@@ -112,6 +114,7 @@ async function startRunPreview(caseId, expectedRuns) {
 
 async function refreshRunPreviewSummaries(caseId) {
   const target = document.getElementById("runProgress");
+  const meta = document.getElementById("runProgressMeta");
   try {
     const res = await fetch(`/cases/${caseId}/runs`);
     if (!res.ok) throw new Error(await res.text());
@@ -123,8 +126,8 @@ async function refreshRunPreviewSummaries(caseId) {
       })
       .filter(Boolean);
     runPreviewState.completedRuns = runs.length;
-    if (target && runPreviewState.expectedRuns) {
-      target.textContent = `Running… ${runPreviewState.completedRuns}/${runPreviewState.expectedRuns} complete`;
+    if (meta && runPreviewState.expectedRuns) {
+      meta.textContent = `Running… ${runPreviewState.completedRuns}/${runPreviewState.expectedRuns} complete`;
     }
     if (!summaries.length) {
       if (target && !runPreviewState.expectedRuns) target.textContent = "Running simulations...";
@@ -1301,9 +1304,13 @@ document.getElementById("runSim").addEventListener("click", async () => {
     renderRuns();
     stopRunPreview();
     document.getElementById("runProgress").textContent = `Completed ${data.length} runs.`;
+    const meta = document.getElementById("runProgressMeta");
+    if (meta) meta.textContent = "";
   } catch (err) {
     stopRunPreview();
     document.getElementById("runProgress").textContent = `Error: ${err.message}`;
+    const meta = document.getElementById("runProgressMeta");
+    if (meta) meta.textContent = "";
   }
 });
 

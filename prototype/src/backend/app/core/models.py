@@ -187,7 +187,7 @@ class ObjectiveValue(BaseModelWithExtra):
 class Objectives(BaseModelWithExtra):
     target: ObjectiveValue
     reservation: ObjectiveValue
-    no_deal_acceptable: bool
+    no_deal_acceptable: bool = False
     issue_weights: Dict[str, float]
 
 
