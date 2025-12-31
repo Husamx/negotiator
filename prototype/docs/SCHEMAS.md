@@ -2,6 +2,7 @@
 
 Canonical definitions live in `prototype/src/backend/app/core/models.py`.
 This file summarizes the minimal runtime shapes used by the current engine.
+See `docs/AGENTS.md` for agent roles and prompt ownership.
 
 ## CaseSnapshot (summary)
 

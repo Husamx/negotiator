@@ -2,6 +2,10 @@
 
 This folder is a clean-slate workspace for a negotiation prototype.
 
+Docs entry points:
+- `docs/AGENTS.md` for agent roles and prompt mapping.
+- `docs/SPEC.md` for core simulation flow and ask-info behavior.
+
 
 When the prototype stabilizes, we can promote pieces into `src/` or a dedicated
 package.

@@ -57,5 +57,21 @@ def init_db() -> None:
         )
         """
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pending_questions (
+            question_id TEXT PRIMARY KEY,
+            case_id TEXT,
+            run_id TEXT,
+            session_id TEXT,
+            status TEXT,
+            asked_by TEXT,
+            question TEXT,
+            created_at TEXT,
+            answer TEXT,
+            answered_at TEXT
+        )
+        """
+    )
     conn.commit()
     conn.close()

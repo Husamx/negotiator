@@ -15,7 +15,7 @@ from app.agents.user_proxy import UserProxyAgent
 from app.agents.world import WorldAgent
 from app.core.config import MAX_PARALLEL_RUNS
 from app.core.counterparty_controls import control_definitions_by_id
-from app.core.models import CaseSnapshot, IssueDirection, Outcome, SimulationRun, Turn
+from app.core.models import ActionType, CaseSnapshot, IssueDirection, Outcome, RunStatus, SimulationRun, Turn
 from app.core.utils import model_to_dict
 from app.services.strategy_registry import StrategyRegistry
 
@@ -24,6 +24,23 @@ from app.services.strategy_registry import StrategyRegistry
 class SimulationResult:
     run: SimulationRun
     trace_bundle: Dict[str, Any]
+    pending_question: Optional[Dict[str, Any]] = None
+
+
+class QuestionBudget:
+    def __init__(self, max_questions: Optional[int], used: int = 0) -> None:
+        self.max_questions = max(0, int(max_questions)) if max_questions is not None else 0
+        self.used = max(0, int(used))
+        self._lock = asyncio.Lock()
+
+    async def reserve(self) -> bool:
+        if self.max_questions <= 0:
+            return False
+        async with self._lock:
+            if self.used >= self.max_questions:
+                return False
+            self.used += 1
+            return True
 
 
 class SimulationEngine:
@@ -37,24 +54,40 @@ class SimulationEngine:
         self.world_agent = WorldAgent(prompt_registry)
         self.max_parallel = max_parallel or MAX_PARALLEL_RUNS
 
-    async def run(self, case: CaseSnapshot, runs: int, max_turns: int, mode: str) -> List[SimulationResult]:
+    async def run(
+        self,
+        case: CaseSnapshot,
+        runs: int,
+        max_turns: int,
+        mode: str,
+        max_questions: Optional[int] = None,
+        session_id: Optional[str] = None,
+    ) -> List[SimulationResult]:
         """Run multiple multi-round simulations for a case (async, parallelized)."""
         results: List[SimulationResult] = []
-        async for result in self.run_stream(case, runs, max_turns, mode):
+        async for result in self.run_stream(case, runs, max_turns, mode, max_questions=max_questions, session_id=session_id):
             results.append(result)
         return results
 
     async def run_stream(
-        self, case: CaseSnapshot, runs: int, max_turns: int, mode: str
+        self,
+        case: CaseSnapshot,
+        runs: int,
+        max_turns: int,
+        mode: str,
+        max_questions: Optional[int] = None,
+        session_id: Optional[str] = None,
     ) -> AsyncIterator[SimulationResult]:
         """Yield simulation results as each run completes."""
         total_runs = max(1, int(runs))
         base_seed = self._base_seed(case.case_id)
         semaphore = asyncio.Semaphore(max(1, int(self.max_parallel)))
+        session_id = session_id or str(uuid.uuid4())
+        budget = QuestionBudget(max_questions)
 
         async def _run_with_sem(seed: int) -> SimulationResult:
             async with semaphore:
-                return await self._run_single(case, seed, max_turns)
+                return await self._run_single(case, seed, max_turns, session_id, budget)
 
         tasks = [asyncio.create_task(_run_with_sem(base_seed + offset)) for offset in range(total_runs)]
         try:
@@ -66,17 +99,36 @@ class SimulationEngine:
                 if not task.done():
                     task.cancel()
 
-    async def _run_single(self, case: CaseSnapshot, seed: int, max_turns: int) -> SimulationResult:
+    async def _run_single(
+        self,
+        case: CaseSnapshot,
+        seed: int,
+        max_turns: int,
+        session_id: str,
+        budget: QuestionBudget,
+        resume_state: Optional[Dict[str, Any]] = None,
+        run_id: Optional[str] = None,
+        strategy_suggestions: Optional[List[Dict[str, Any]]] = None,
+    ) -> SimulationResult:
         conversation: List[Dict[str, str]] = []
         turns: List[Turn] = []
         agent_call_traces: List[Dict[str, Any]] = []
-        strategy_suggestions = self._strategy_suggestions(seed)
-        clarifications_text = self._clarifications_text(case)
         latest_outcome = Outcome.NEUTRAL
         round_user_turn_index: Optional[int] = None
+        run_id = run_id or str(uuid.uuid4())
+        strategy_suggestions = strategy_suggestions or self._strategy_suggestions(seed)
+        clarifications_text = self._clarifications_text(case)
+        start_turn_index = 1
+        if resume_state:
+            conversation = resume_state.get("conversation", [])
+            turns = [Turn(**turn) for turn in resume_state.get("turns", [])]
+            agent_call_traces = list(resume_state.get("agent_call_traces", []))
+            latest_outcome = Outcome(resume_state.get("latest_outcome", Outcome.NEUTRAL.value))
+            round_user_turn_index = resume_state.get("round_user_turn_index")
+            start_turn_index = int(resume_state.get("next_turn_index", 1))
 
         max_turns = max(1, int(max_turns))
-        for turn_index in range(1, max_turns + 1):
+        for turn_index in range(start_turn_index, max_turns + 1):
             is_user_turn = turn_index % 2 == 1
             if is_user_turn:
                 user_variables = {
@@ -88,6 +140,7 @@ class SimulationEngine:
                     "target_summary": self._objective_summary(case, kind="target"),
                     "reservation_summary": self._objective_summary(case, kind="reservation"),
                     "clarifications": clarifications_text,
+                    "ask_info_budget_remaining": max(0, (budget.max_questions or 0) - budget.used),
                     "strategy_suggestions": self._strategy_suggestions_text(strategy_suggestions),
                 }
                 user_fallback = self._user_fallback_message(case)
@@ -97,7 +150,57 @@ class SimulationEngine:
                     user_fallback,
                     messages=user_messages,
                 )
-                user_text = self._enforce_user_assertive(user_text, user_fallback)
+                action_type, action_payload, action_obj = self._extract_action(user_call)
+                if action_type == "ASK_INFO":
+                    question_text = self._extract_question_text(user_text, action_payload)
+                    if question_text and await budget.reserve():
+                        agent_call_traces.append(self._trace_entry("UserProxy", user_call))
+                        pause_state = {
+                            "conversation": conversation,
+                            "turns": [model_to_dict(t) for t in turns],
+                            "agent_call_traces": agent_call_traces,
+                            "latest_outcome": latest_outcome.value,
+                            "round_user_turn_index": round_user_turn_index,
+                            "next_turn_index": turn_index,
+                            "strategy_suggestions": strategy_suggestions,
+                        }
+                        run = SimulationRun(
+                            run_id=run_id,
+                            case_id=case.case_id,
+                            seed=seed,
+                            persona_id="GENERIC",
+                            turns=turns,
+                            outcome=latest_outcome,
+                            user_utility=self._utility_from_outcome(latest_outcome),
+                            summary=None,
+                            status=RunStatus.PAUSED,
+                            session_id=session_id,
+                            pending_question_id=None,
+                            max_turns=max_turns,
+                            max_questions=budget.max_questions,
+                        )
+                        trace_bundle = {
+                            "run_trace": {
+                                "seed": seed,
+                                "session_id": session_id,
+                                "max_questions": budget.max_questions,
+                                "strategy_suggestions": strategy_suggestions,
+                                "pause_state": pause_state,
+                            },
+                            "turn_traces": [model_to_dict(t) for t in turns],
+                            "agent_call_traces": agent_call_traces,
+                        }
+                        pending_question = {
+                            "question": question_text,
+                            "asked_by": "USER",
+                            "turn_index": turn_index,
+                            "session_id": session_id,
+                            "run_id": run_id,
+                        }
+                        return SimulationResult(run=run, trace_bundle=trace_bundle, pending_question=pending_question)
+                    # Budget not available or invalid question payload: treat as a normal turn.
+                    self._override_action(user_call, action_type=ActionType.PROPOSE_OFFER.value)
+                    action_obj = (user_call.parsed_output or {}).get("action") or action_obj
                 conversation.append({"speaker": "USER", "text": user_text})
                 turns.append(
                     Turn(
@@ -108,6 +211,7 @@ class SimulationEngine:
                         outcome=latest_outcome,
                         strategy_suggestions=strategy_suggestions,
                         used_strategies=self._extract_used_strategies(user_call),
+                        action=action_obj,
                     )
                 )
                 agent_call_traces.append(self._trace_entry("UserProxy", user_call))
@@ -129,6 +233,57 @@ class SimulationEngine:
                     counter_fallback,
                     messages=counter_messages,
                 )
+                action_type, action_payload, action_obj = self._extract_action(counter_call)
+                if action_type == "ASK_INFO":
+                    question_text = self._extract_question_text(counter_text, action_payload)
+                    if question_text and await budget.reserve():
+                        agent_call_traces.append(self._trace_entry("Counterparty", counter_call))
+                        pause_state = {
+                            "conversation": conversation,
+                            "turns": [model_to_dict(t) for t in turns],
+                            "agent_call_traces": agent_call_traces,
+                            "latest_outcome": latest_outcome.value,
+                            "round_user_turn_index": round_user_turn_index,
+                            "next_turn_index": turn_index,
+                            "strategy_suggestions": strategy_suggestions,
+                        }
+                        run = SimulationRun(
+                            run_id=run_id,
+                            case_id=case.case_id,
+                            seed=seed,
+                            persona_id="GENERIC",
+                            turns=turns,
+                            outcome=latest_outcome,
+                            user_utility=self._utility_from_outcome(latest_outcome),
+                            summary=None,
+                            status=RunStatus.PAUSED,
+                            session_id=session_id,
+                            pending_question_id=None,
+                            max_turns=max_turns,
+                            max_questions=budget.max_questions,
+                        )
+                        trace_bundle = {
+                            "run_trace": {
+                                "seed": seed,
+                                "session_id": session_id,
+                                "max_questions": budget.max_questions,
+                                "strategy_suggestions": strategy_suggestions,
+                                "pause_state": pause_state,
+                            },
+                            "turn_traces": [model_to_dict(t) for t in turns],
+                            "agent_call_traces": agent_call_traces,
+                        }
+                        pending_question = {
+                            "question": question_text,
+                            "asked_by": "COUNTERPARTY",
+                            "turn_index": turn_index,
+                            "session_id": session_id,
+                            "run_id": run_id,
+                        }
+                        return SimulationResult(run=run, trace_bundle=trace_bundle, pending_question=pending_question)
+                    # Budget not available or invalid question payload: treat as a normal turn.
+                    self._override_action(counter_call, action_type=ActionType.COUNTER_OFFER.value)
+                    action_obj = (counter_call.parsed_output or {}).get("action") or action_obj
                 conversation.append({"speaker": "COUNTERPARTY", "text": counter_text})
                 agent_call_traces.append(self._trace_entry("Counterparty", counter_call))
 
@@ -163,6 +318,7 @@ class SimulationEngine:
                         outcome=latest_outcome,
                         strategy_suggestions=strategy_suggestions,
                         used_strategies=self._extract_used_strategies(counter_call),
+                        action=action_obj,
                     )
                 )
                 if latest_outcome in (Outcome.PASS, Outcome.FAIL):
@@ -187,7 +343,7 @@ class SimulationEngine:
         )
         agent_call_traces.append(self._trace_entry("WorldAgent", summary_call))
         run = SimulationRun(
-            run_id=str(uuid.uuid4()),
+            run_id=run_id,
             case_id=case.case_id,
             seed=seed,
             persona_id="GENERIC",
@@ -195,10 +351,17 @@ class SimulationEngine:
             outcome=latest_outcome,
             user_utility=user_utility,
             summary=summary,
+            status=RunStatus.COMPLETED,
+            session_id=session_id,
+            pending_question_id=None,
+            max_turns=max_turns,
+            max_questions=budget.max_questions,
         )
         trace_bundle = {
             "run_trace": {
                 "seed": seed,
+                "session_id": session_id,
+                "max_questions": budget.max_questions,
                 "strategy_suggestions": strategy_suggestions,
                 "extraction": extraction,
             },
@@ -206,6 +369,32 @@ class SimulationEngine:
             "agent_call_traces": agent_call_traces,
         }
         return SimulationResult(run=run, trace_bundle=trace_bundle)
+
+    async def resume_run(
+        self,
+        case: CaseSnapshot,
+        run_data: Dict[str, Any],
+        trace_bundle: Dict[str, Any],
+        max_turns: int,
+        budget_used: int,
+    ) -> SimulationResult:
+        """Resume a paused run using its stored pause state."""
+        pause_state = (trace_bundle.get("run_trace") or {}).get("pause_state") or {}
+        session_id = run_data.get("session_id") or str(uuid.uuid4())
+        max_questions = run_data.get("max_questions")
+        if max_questions is None:
+            max_questions = (trace_bundle.get("run_trace") or {}).get("max_questions")
+        budget = QuestionBudget(max_questions, used=budget_used)
+        return await self._run_single(
+            case,
+            seed=run_data.get("seed", 0),
+            max_turns=max_turns,
+            session_id=session_id,
+            budget=budget,
+            resume_state=pause_state,
+            run_id=run_data.get("run_id"),
+            strategy_suggestions=(trace_bundle.get("run_trace") or {}).get("strategy_suggestions"),
+        )
 
     def _trace_entry(self, agent_name: str, call) -> Dict[str, Any]:
         """Format a trace entry from an agent call result."""
@@ -377,10 +566,38 @@ class SimulationEngine:
     def _counterparty_fallback_message(self, case: CaseSnapshot) -> str:
         return "Thanks for outlining your goal. I need to balance this with internal constraints; here is a realistic counteroffer."
 
-    def _enforce_user_assertive(self, message_text: str, fallback: str) -> str:
-        if "?" in message_text:
-            return fallback
-        return message_text
+    def _extract_action(self, call) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
+        parsed = getattr(call, "parsed_output", {}) or {}
+        action = parsed.get("action") if isinstance(parsed, dict) else None
+        if not isinstance(action, dict):
+            action = {}
+        action_type = self._normalize_action_type(action.get("type"))
+        payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
+        return action_type, payload, action
+
+    def _normalize_action_type(self, value: Any) -> str:
+        if isinstance(value, ActionType):
+            return value.value
+        if isinstance(value, str):
+            text = value.strip()
+            if "." in text:
+                text = text.split(".")[-1]
+            return text.upper()
+        if value is None:
+            return ""
+        return str(value).upper()
+
+    def _extract_question_text(self, message_text: str, payload: Dict[str, Any]) -> str:
+        question = (payload.get("question") or "").strip()
+        if question:
+            return question
+        return (message_text or "").strip()
+
+    def _override_action(self, call, action_type: str) -> None:
+        parsed = getattr(call, "parsed_output", {}) or {}
+        if not isinstance(parsed, dict):
+            return
+        parsed["action"] = {"type": action_type, "payload": {}}
 
     def _extract_used_strategies(self, call) -> Optional[List[str]]:
         parsed = getattr(call, "parsed_output", {}) or {}

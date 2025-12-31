@@ -14,7 +14,7 @@
           <div class="subtitle">Agentic Negotiation Simulator</div>
         </div>
         <nav>
-          <button class="nav-link" data-target="case">Case Setup</button>
+          <button class="nav-link" data-target="snapshot">Case Snapshot</button>
           <button class="nav-link" data-target="counterparty">Counterparty</button>
           <button class="nav-link" data-target="simulate">Simulate</button>
           <button class="nav-link" data-target="insights">Insights</button>
@@ -30,8 +30,62 @@
       </aside>
 
       <main class="content">
-        <section id="case" class="panel active">
-          <h1>Case Setup</h1>
+        <section id="snapshot" class="panel active">
+          <h1>Case Snapshot</h1>
+          <div class="panel-grid">
+            <div>
+              <label>Topic <span class="hint-icon" data-tooltip="Describe the real-world situation and what is being negotiated.">?</span></label>
+              <textarea id="snapshotTopic" rows="3" placeholder="Describe the negotiation or debate"></textarea>
+            </div>
+            <div class="row">
+              <div>
+                <label>Domain <span class="hint-icon" data-tooltip="Sets the negotiation type and shapes the agent prompts.">?</span></label>
+                <select id="snapshotDomain">
+                  <option value="GENERAL">GENERAL</option>
+                  <option value="JOB_OFFER_COMP">JOB_OFFER_COMP</option>
+                  <option value="RENT_HOUSING">RENT_HOUSING</option>
+                  <option value="PROCUREMENT_VENDOR">PROCUREMENT_VENDOR</option>
+                  <option value="SERVICES_CONTRACTOR">SERVICES_CONTRACTOR</option>
+                </select>
+              </div>
+              <div>
+                <label>Channel <span class="hint-icon" data-tooltip="How the negotiation happens (email, in-person, DM, etc.).">?</span></label>
+                <select id="snapshotChannel">
+                  <option value="UNSPECIFIED">UNSPECIFIED</option>
+                  <option value="IN_PERSON">IN_PERSON</option>
+                  <option value="EMAIL">EMAIL</option>
+                  <option value="DM">DM</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-header">
+                <h2>Key Questions</h2>
+                <button id="refreshSnapshotQuestions" type="button">Generate Questions</button>
+              </div>
+              <div id="snapshotQuestions" class="snapshot-questions"></div>
+            </div>
+
+            <div class="actions">
+              <select id="snapshotSampleCaseSelect" aria-label="Sample case"></select>
+              <button id="snapshotLoadSample" type="button">Load Sample</button>
+              <select id="snapshotSavedCaseSelect" aria-label="Saved case" multiple size="4"></select>
+              <button id="snapshotLoadSavedCase" type="button">Load Saved Case</button>
+              <button id="snapshotDeleteSavedCases" type="button">Delete Selected</button>
+              <button id="snapshotCreateCase" class="primary" type="button">Create Case</button>
+              <button id="snapshotClearDraft" type="button">Clear Draft</button>
+              <button id="openAdvancedCase" type="button">Open Detailed Setup</button>
+            </div>
+            <div class="status" id="snapshotStatus">Start by typing a topic to generate questions.</div>
+          </div>
+        </section>
+
+        <section id="caseAdvanced" class="panel">
+          <h1>Case Setup (Detailed)</h1>
+          <div class="actions">
+            <button id="backToSnapshot" type="button">Back to Snapshot</button>
+          </div>
           <div class="panel-grid">
             <div>
               <label>Topic <span class="hint-icon" data-tooltip="Describe the real-world situation and what is being negotiated.">?</span></label>
@@ -116,6 +170,7 @@
               <button id="loadSavedCase">Load Saved Case</button>
               <button id="deleteSavedCases">Delete Selected</button>
               <button id="createCase" class="primary">Create Case</button>
+              <button id="resetCase">Reset Case</button>
               <button id="validateCase">Validate</button>
             </div>
             <div class="status" id="caseStatus">No case created.</div>
@@ -183,6 +238,7 @@
             </div>
             <div class="actions">
               <button id="calibratePersona" class="primary">Calibrate Persona</button>
+              <button id="resetCounterparty">Reset Counterparty</button>
             </div>
             <pre id="personaDistribution" class="output"></pre>
             <div class="status" id="counterpartyHintStatus"></div>
@@ -201,13 +257,32 @@
                 <label>Max Turns</label>
                 <input type="number" id="max_turns" min="1" value="8" />
               </div>
+              <div>
+                <label>Max Questions</label>
+                <input type="number" id="max_questions" min="0" value="5" />
+              </div>
             </div>
             <div class="actions">
               <button id="runSim" class="primary">Run Simulations</button>
             </div>
             <div id="runProgress" class="status"></div>
             <div id="runProgressMeta" class="status"></div>
+            <div id="askInfoBudgetStatus" class="status"></div>
             <div class="table" id="runsTable"></div>
+            <div class="section">
+              <div class="section-header">
+                <h2>Pending Questions</h2>
+                <button id="refreshQuestions" type="button">Refresh</button>
+              </div>
+              <div id="pendingQuestionCard" class="pending-question">
+                <div id="pendingQuestionMeta" class="status"></div>
+                <div id="pendingQuestionText"></div>
+                <textarea id="pendingQuestionAnswer" rows="2" placeholder="Type your answer..."></textarea>
+                <div class="actions">
+                  <button id="submitQuestionAnswer" class="primary">Submit Answer</button>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -285,6 +360,8 @@
                 <button id="loadTrace" class="primary">Load Trace</button>
                 <button id="debugSearchButton">Search</button>
                 <button id="debugSearchClear">Clear</button>
+                <button id="debugFilterFallbacks">Fallbacks Only</button>
+                <button id="debugFilterNonFallbacks">No Fallbacks</button>
               </div>
             </div>
             <div id="debugStatus" class="status"></div>

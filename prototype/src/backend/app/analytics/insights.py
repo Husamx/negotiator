@@ -6,9 +6,14 @@ from typing import Any, Dict, List
 from app.core.models import CaseSnapshot
 
 
+def _completed_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [run for run in runs if run.get("status") != "PAUSED"]
+
+
 def outcome_rates(runs: List[Dict[str, Any]]) -> Dict[str, float]:
     """Compute outcome rate distribution for a set of runs.
     """
+    runs = _completed_runs(runs)
     total = max(len(runs), 1)
     counts = Counter(run["outcome"] for run in runs)
     return {
@@ -21,6 +26,7 @@ def outcome_rates(runs: List[Dict[str, Any]]) -> Dict[str, float]:
 def compute_outcome_rates(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Compute outcome rates overall and segmented by persona/strategy.
     """
+    runs = _completed_runs(runs)
     by_persona: Dict[str, List[Dict[str, Any]]] = {}
     for run in runs:
         by_persona.setdefault(run.get("persona_id", "GENERIC"), []).append(run)
@@ -33,6 +39,7 @@ def compute_outcome_rates(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
 def compute_insights(case: CaseSnapshot, runs: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Assemble the full insights payload for a case.
     """
+    runs = _completed_runs(runs)
     strategy_usage_summary = _compute_strategy_usage_summary(runs)
     return {
         "outcome_rates": compute_outcome_rates(runs),

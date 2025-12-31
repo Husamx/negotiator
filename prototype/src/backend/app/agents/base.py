@@ -111,7 +111,11 @@ class AgentBase:
         assistant_label = "USER" if agent_name == "UserProxy" else "COUNTERPARTY"
         user_label = "COUNTERPARTY" if agent_name == "UserProxy" else "USER"
         system_part, user_part = AgentBase._split_prompt(system_prompt)
-        history_lines = ["CONVERSATION HISTORY (USER, COUNTERPARTY, WORLDAGENT):"]
+        roleplay_agent = agent_name in ("UserProxy", "Counterparty")
+        history_lines = []
+        if roleplay_agent:
+            history_lines.append(f"You are the {agent_label} in this conversation. Respond as {assistant_label}.")
+        history_lines.append("CONVERSATION HISTORY (USER, COUNTERPARTY, WORLDAGENT):")
         if not messages:
             history_lines.append("None")
         else:
@@ -121,6 +125,8 @@ class AgentBase:
                 speaker = assistant_label if role == "assistant" else user_label
                 history_lines.append(f"{speaker}: {content}")
         history_lines.append(f"You are {agent_label} for this call.")
+        if roleplay_agent:
+            history_lines.append(f"{assistant_label}:")
         history_block = "\n".join(history_lines)
         user_sections = [section for section in [user_part.strip(), history_block.strip()] if section]
         user_payload = "\n\n".join(user_sections).strip()

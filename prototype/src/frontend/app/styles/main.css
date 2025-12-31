@@ -299,6 +299,37 @@ button:hover {
   color: var(--muted);
 }
 
+.snapshot-questions {
+  display: grid;
+  gap: 12px;
+}
+
+.snapshot-question {
+  background: #fffaf1;
+  border: 1px solid #e8dfd2;
+  border-radius: 14px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.snapshot-question-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.snapshot-rank {
+  background: #1c1a16;
+  color: #fff;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .hint {
   margin-top: 8px;
   padding: 8px 10px;
@@ -465,6 +496,19 @@ button:hover {
   font-size: 12px;
   white-space: pre-wrap;
   color: #5a2018;
+}
+
+.pending-question {
+  background: #fffaf1;
+  border: 1px solid #e8dfd2;
+  border-radius: 16px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.pending-question textarea {
+  min-height: 80px;
 }
 
 .insights-toolbar {

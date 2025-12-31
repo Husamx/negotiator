@@ -57,9 +57,18 @@ class CounterpartyHintExamplesOutput(BaseModel):
     examples: Dict[str, str] = Field(default_factory=dict)
 
 
+class CaseQuestion(BaseModel):
+    rank: int
+    question: str
+
+
+class CaseQuestionsOutput(BaseModel):
+    questions: list[CaseQuestion] = Field(default_factory=list)
+
+
 class RoleplayOutput(BaseModel):
-    action: AgentAction
     message_text: str
+    action: AgentAction
     used_strategies: Optional[list[str]] = None
 
 

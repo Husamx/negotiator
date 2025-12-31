@@ -5,6 +5,8 @@ This prototype is intentionally minimal and domain-agnostic. It runs a single si
 - Counterparty responds realistically given the environment assumptions.
 - Each agent receives the full message history embedded in the composed system prompt.
 
+Agent responsibilities and prompt mapping are documented in `docs/AGENTS.md`.
+
 ## Core Flow
 
 1. Create a CaseSnapshot.
@@ -43,6 +45,33 @@ Notes:
   "used_strategies": ["STRAT_ID"]
 }
 ```
+
+## Ask-Info Protocol (Queue + Budget)
+
+When an agent needs missing information, it must:
+- Emit `action.type = ASK_INFO` and include `{"question": "..."}`
+- Phrase the question in-role, using the scenario context.
+
+### Queueing + Pausing
+- Each simulation batch has a `session_id`.
+- If an agent outputs `ASK_INFO`, the engine pauses only that run:
+  - Run status becomes `PAUSED`.
+  - A pending question is created (FIFO queue) tied to `case_id`, `run_id`, and `session_id`.
+  - The run stores a `pause_state` (conversation + turn index) to resume later.
+- Other runs continue unaffected.
+
+### User Answers
+- The UI surfaces one pending question at a time.
+- User answers are appended to `case.clarifications` and injected into prompts.
+- The paused run resumes from its `pause_state` after the answer is submitted.
+
+### Question Budget
+- The simulation request includes `max_questions`.
+- Across a session, only `max_questions` total questions may be asked.
+- If the budget is exhausted, the engine converts `ASK_INFO` into a normal response (fallback message) and continues the run.
+
+### Timeouts
+- If the user does not answer, the run stays `PAUSED` until resolved.
 
 ## Prompt Payload
 

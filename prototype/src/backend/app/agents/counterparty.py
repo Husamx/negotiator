@@ -29,16 +29,28 @@ class CounterpartyAgent(AgentBase):
             response_model=RoleplayOutput,
             messages=messages,
         )
-        message_text = parsed_output.get("message_text") if isinstance(parsed_output, dict) else ""
-        used_strategies = parsed_output.get("used_strategies") if isinstance(parsed_output, dict) else None
-        action = parsed_output.get("action") if isinstance(parsed_output, dict) else None
-        if not isinstance(message_text, str) or not message_text.strip():
+        validation_status = (call.validation_result or {}).get("status")
+        fallback_used = validation_status == "FAIL"
+        fallback_reason = "unparsable" if fallback_used else None
+        if fallback_used:
             message_text = fallback_message
-        if not isinstance(used_strategies, list):
-            used_strategies = None
-        else:
-            used_strategies = [str(item) for item in used_strategies]
-        if not isinstance(action, dict):
+            used_strategies = []
             action = fallback_payload.get("action")
-        call.parsed_output = {"action": action, "message_text": message_text, "used_strategies": used_strategies}
+        else:
+            message_text = parsed_output.get("message_text") if isinstance(parsed_output, dict) else ""
+            used_strategies = parsed_output.get("used_strategies") if isinstance(parsed_output, dict) else None
+            action = parsed_output.get("action") if isinstance(parsed_output, dict) else None
+            if not isinstance(used_strategies, list):
+                used_strategies = None
+            else:
+                used_strategies = [str(item) for item in used_strategies]
+            if not isinstance(action, dict):
+                action = fallback_payload.get("action")
+        call.parsed_output = {
+            "message_text": message_text,
+            "action": action,
+            "used_strategies": used_strategies,
+            "fallback_used": fallback_used,
+            "fallback_reason": fallback_reason,
+        }
         return message_text, call

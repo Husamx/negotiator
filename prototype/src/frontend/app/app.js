@@ -4,6 +4,10 @@ const state = {
   runs: [],
   personaDistribution: null,
   debugRunsAll: [],
+  snapshotQuestions: [],
+  snapshotQuestionKey: null,
+  sessionId: null,
+  pendingQuestion: null,
 };
 
 const navLinks = document.querySelectorAll(".nav-link");
@@ -15,7 +19,37 @@ const debugStatus = document.getElementById("debugStatus");
 const debugSearchInput = document.getElementById("debugSearchInput");
 const debugSearchButton = document.getElementById("debugSearchButton");
 const debugSearchClear = document.getElementById("debugSearchClear");
+const debugFilterFallbacks = document.getElementById("debugFilterFallbacks");
+const debugFilterNonFallbacks = document.getElementById("debugFilterNonFallbacks");
 const debugTraceCache = new Map();
+const resetCaseButton = document.getElementById("resetCase");
+const resetCounterpartyButton = document.getElementById("resetCounterparty");
+const snapshotTopicInput = document.getElementById("snapshotTopic");
+const snapshotDomainSelect = document.getElementById("snapshotDomain");
+const snapshotChannelSelect = document.getElementById("snapshotChannel");
+const snapshotQuestionsEl = document.getElementById("snapshotQuestions");
+const snapshotStatus = document.getElementById("snapshotStatus");
+const refreshSnapshotQuestionsBtn = document.getElementById("refreshSnapshotQuestions");
+const openAdvancedCaseBtn = document.getElementById("openAdvancedCase");
+const snapshotSampleCaseSelect = document.getElementById("snapshotSampleCaseSelect");
+const snapshotLoadSampleBtn = document.getElementById("snapshotLoadSample");
+const snapshotCreateCaseBtn = document.getElementById("snapshotCreateCase");
+const snapshotSavedCaseSelect = document.getElementById("snapshotSavedCaseSelect");
+const snapshotLoadSavedCaseBtn = document.getElementById("snapshotLoadSavedCase");
+const snapshotDeleteSavedCasesBtn = document.getElementById("snapshotDeleteSavedCases");
+const snapshotClearDraftBtn = document.getElementById("snapshotClearDraft");
+const backToSnapshotBtn = document.getElementById("backToSnapshot");
+const advancedTopicInput = document.getElementById("topic");
+const advancedDomainSelect = document.getElementById("domain");
+const advancedChannelSelect = document.getElementById("channel");
+const maxQuestionsInput = document.getElementById("max_questions");
+const pendingQuestionCard = document.getElementById("pendingQuestionCard");
+const pendingQuestionMeta = document.getElementById("pendingQuestionMeta");
+const pendingQuestionText = document.getElementById("pendingQuestionText");
+const pendingQuestionAnswer = document.getElementById("pendingQuestionAnswer");
+const submitQuestionAnswer = document.getElementById("submitQuestionAnswer");
+const refreshQuestionsBtn = document.getElementById("refreshQuestions");
+const askInfoBudgetStatus = document.getElementById("askInfoBudgetStatus");
 const RUN_PREVIEW_WORDS_MAX = 5;
 const RUN_PREVIEW_DELAY_CAP_MS = 120;
 const RUN_PREVIEW_DELAY_MIN_MS = 30;
@@ -32,6 +66,10 @@ const runPreviewState = {
   completedRuns: 0,
   baseRuns: null,
 };
+let snapshotQuestionTimer = null;
+let questionPollTimer = null;
+let draftSaveTimer = null;
+const DRAFT_STORAGE_KEY = "negotiator:case_draft:v1";
 
 navLinks.forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -51,17 +89,428 @@ function setActivePanel(id) {
   panels.forEach((panel) => {
     panel.classList.toggle("active", panel.id === id);
   });
+  if (id === "snapshot") {
+    maybeGenerateSnapshotQuestions();
+  }
   if (id === "counterparty") {
     loadCounterpartyHints();
+  }
+  if (id === "simulate") {
+    fetchPendingQuestion();
   }
   if (id === "debug") {
     refreshDebugRuns();
   }
 }
 
+if (openAdvancedCaseBtn) {
+  openAdvancedCaseBtn.addEventListener("click", () => {
+    setActivePanel("caseAdvanced");
+  });
+}
+
+if (backToSnapshotBtn) {
+  backToSnapshotBtn.addEventListener("click", () => {
+    setActivePanel("snapshot");
+  });
+}
+
+if (snapshotTopicInput) {
+  snapshotTopicInput.addEventListener("input", () => {
+    if (advancedTopicInput) advancedTopicInput.value = snapshotTopicInput.value;
+    scheduleSnapshotQuestions();
+    scheduleDraftSave();
+  });
+}
+
+if (snapshotDomainSelect) {
+  snapshotDomainSelect.addEventListener("change", () => {
+    if (advancedDomainSelect) advancedDomainSelect.value = snapshotDomainSelect.value;
+    scheduleSnapshotQuestions({ force: true });
+    scheduleDraftSave();
+  });
+}
+
+if (snapshotChannelSelect) {
+  snapshotChannelSelect.addEventListener("change", () => {
+    if (advancedChannelSelect) advancedChannelSelect.value = snapshotChannelSelect.value;
+    scheduleSnapshotQuestions({ force: true });
+    scheduleDraftSave();
+  });
+}
+
+if (advancedTopicInput) {
+  advancedTopicInput.addEventListener("input", () => {
+    if (snapshotTopicInput) snapshotTopicInput.value = advancedTopicInput.value;
+    scheduleSnapshotQuestions();
+    scheduleDraftSave();
+  });
+}
+
+if (advancedDomainSelect) {
+  advancedDomainSelect.addEventListener("change", () => {
+    if (snapshotDomainSelect) snapshotDomainSelect.value = advancedDomainSelect.value;
+    scheduleSnapshotQuestions({ force: true });
+    scheduleDraftSave();
+  });
+}
+
+if (advancedChannelSelect) {
+  advancedChannelSelect.addEventListener("change", () => {
+    if (snapshotChannelSelect) snapshotChannelSelect.value = advancedChannelSelect.value;
+    scheduleSnapshotQuestions({ force: true });
+    scheduleDraftSave();
+  });
+}
+
+if (maxQuestionsInput) {
+  maxQuestionsInput.addEventListener("input", () => {
+    const value = parseInt(maxQuestionsInput.value, 10);
+    if (Number.isNaN(value)) {
+      updateAskInfoBudgetStatus(0);
+    } else {
+      updateAskInfoBudgetStatus(value);
+    }
+  });
+}
+
+if (refreshSnapshotQuestionsBtn) {
+  refreshSnapshotQuestionsBtn.addEventListener("click", () => {
+    scheduleSnapshotQuestions({ force: true });
+  });
+}
+
+if (refreshQuestionsBtn) {
+  refreshQuestionsBtn.addEventListener("click", () => {
+    fetchPendingQuestion();
+  });
+}
+
+if (submitQuestionAnswer) {
+  submitQuestionAnswer.addEventListener("click", async () => {
+    if (!state.pendingQuestion || !state.caseId) return;
+    const answer = pendingQuestionAnswer?.value?.trim() || "";
+    if (!answer) {
+      if (pendingQuestionText) pendingQuestionText.textContent = "Please enter an answer.";
+      return;
+    }
+    submitQuestionAnswer.disabled = true;
+    try {
+      const res = await fetch(`/runs/${state.pendingQuestion.run_id}/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question_id: state.pendingQuestion.question_id,
+          answer,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      await fetchPendingQuestion();
+      if (state.caseId) {
+        const runsRes = await fetch(`/cases/${state.caseId}/runs`);
+        if (runsRes.ok) {
+          state.runs = await runsRes.json();
+          renderRuns();
+        }
+      }
+    } catch (err) {
+      if (pendingQuestionText) pendingQuestionText.textContent = `Error: ${err.message}`;
+    } finally {
+      submitQuestionAnswer.disabled = false;
+    }
+  });
+}
+
 function updateStatus(message) {
   const el = document.getElementById("caseStatus");
-  el.textContent = message;
+  if (el) el.textContent = message;
+  if (snapshotStatus) snapshotStatus.textContent = message;
+}
+
+function scheduleDraftSave() {
+  if (draftSaveTimer) clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(saveDraftState, 500);
+}
+
+function clearDraftState() {
+  try {
+    localStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch (err) {
+    // ignore
+  }
+}
+
+function saveDraftState() {
+  if (!snapshotTopicInput || !advancedTopicInput) return;
+  const draft = {
+    updated_at: new Date().toISOString(),
+    topic: snapshotTopicInput.value || advancedTopicInput.value || "",
+    domain: snapshotDomainSelect?.value || advancedDomainSelect?.value || "GENERAL",
+    channel: snapshotChannelSelect?.value || advancedChannelSelect?.value || "UNSPECIFIED",
+    snapshot_questions: state.snapshotQuestions || [],
+    user_issues: collectUserIssues(),
+    counterparty_issues: collectCounterpartyIssues(),
+    objectives: collectObjectives(),
+    parameters: collectParameters(),
+    counterparty_controls: {
+      policy_rigidity: document.getElementById("policyRigidity")?.value || "unknown",
+      cooperativeness: document.getElementById("cooperativeness")?.value || "unknown",
+      time_pressure: document.getElementById("timePressure")?.value || "unknown",
+      authority_clarity: document.getElementById("authorityClarity")?.value || "unknown",
+    },
+  };
+  try {
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch (err) {
+    // ignore storage errors
+  }
+}
+
+function loadDraftState() {
+  let raw = null;
+  try {
+    raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+  } catch (err) {
+    raw = null;
+  }
+  if (!raw) return false;
+  try {
+    const draft = JSON.parse(raw);
+    applyDraftState(draft);
+    updateStatus("Draft restored.");
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+function applyDraftState(draft) {
+  if (!draft) return;
+  const topic = draft.topic || "";
+  const domain = draft.domain || "GENERAL";
+  const channel = draft.channel || "UNSPECIFIED";
+  setSnapshotBasics(topic, domain, channel, { triggerQuestions: false });
+  const draftQuestions = Array.isArray(draft.snapshot_questions) ? draft.snapshot_questions : [];
+  state.snapshotQuestions = draftQuestions;
+  renderSnapshotQuestions(draftQuestions);
+  if (topic) {
+    state.snapshotQuestionKey = snapshotKey(topic, domain, channel);
+  }
+  setUserIssues(draft.user_issues || []);
+  setCounterpartyIssues(draft.counterparty_issues || []);
+  if (draft.objectives) {
+    setObjectives(draft.objectives);
+  } else {
+    renderObjectiveInputs();
+  }
+  setParameters(draft.parameters || []);
+  const controls = draft.counterparty_controls || {};
+  const policyEl = document.getElementById("policyRigidity");
+  const coopEl = document.getElementById("cooperativeness");
+  const timeEl = document.getElementById("timePressure");
+  const authEl = document.getElementById("authorityClarity");
+  if (policyEl) policyEl.value = controls.policy_rigidity || "unknown";
+  if (coopEl) coopEl.value = controls.cooperativeness || "unknown";
+  if (timeEl) timeEl.value = controls.time_pressure || "unknown";
+  if (authEl) authEl.value = controls.authority_clarity || "unknown";
+}
+
+function renderPendingQuestion(question, queueLength = 0) {
+  const previousId = state.pendingQuestion?.question_id || null;
+  const isSameQuestion = question && previousId && question.question_id == previousId;
+  const preserveAnswer =
+    isSameQuestion &&
+    pendingQuestionAnswer &&
+    document.activeElement === pendingQuestionAnswer &&
+    pendingQuestionAnswer.value.trim().length > 0;
+  state.pendingQuestion = question;
+  if (!pendingQuestionCard) return;
+  if (!question) {
+    if (pendingQuestionMeta) pendingQuestionMeta.textContent = "";
+    if (pendingQuestionText) pendingQuestionText.textContent = "No pending questions.";
+    if (pendingQuestionAnswer) pendingQuestionAnswer.value = "";
+    if (submitQuestionAnswer) submitQuestionAnswer.disabled = true;
+    return;
+  }
+  if (pendingQuestionMeta) {
+    const runId = question.run_id ? question.run_id.slice(0, 8) : "unknown";
+    pendingQuestionMeta.textContent = `Run ${runId} A? Queue ${queueLength}`;
+  }
+  if (pendingQuestionText) pendingQuestionText.textContent = question.question || "";
+  if (pendingQuestionAnswer && !preserveAnswer && !isSameQuestion) {
+    pendingQuestionAnswer.value = "";
+  }
+  if (submitQuestionAnswer) submitQuestionAnswer.disabled = false;
+}
+
+async function fetchPendingQuestion() {
+  if (!state.caseId || !state.sessionId) {
+    renderPendingQuestion(null, 0);
+    return;
+  }
+  try {
+    const res = await fetch(
+      `/cases/${state.caseId}/questions/next?session_id=${encodeURIComponent(state.sessionId)}`
+    );
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    renderPendingQuestion(data.question, data.queue_length || 0);
+    if (data.remaining_budget !== undefined && data.remaining_budget !== null) {
+      updateAskInfoBudgetStatus(data.remaining_budget);
+    }
+  } catch (err) {
+    if (pendingQuestionText) pendingQuestionText.textContent = `Error: ${err.message}`;
+  }
+}
+
+function startQuestionPolling() {
+  if (questionPollTimer) clearInterval(questionPollTimer);
+  questionPollTimer = setInterval(fetchPendingQuestion, 3000);
+}
+
+function stopQuestionPolling() {
+  if (questionPollTimer) clearInterval(questionPollTimer);
+  questionPollTimer = null;
+}
+
+function updateAskInfoBudgetStatus(value) {
+  if (!askInfoBudgetStatus) return;
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    askInfoBudgetStatus.textContent = "";
+    return;
+  }
+  askInfoBudgetStatus.textContent = `Ask-info budget: ${value}`;
+}
+
+function snapshotKey(topic, domain, channel) {
+  return `${topic}||${domain}||${channel}`;
+}
+
+function renderSnapshotQuestions(questions = []) {
+  if (!snapshotQuestionsEl) return;
+  snapshotQuestionsEl.innerHTML = "";
+  if (!questions.length) {
+    snapshotQuestionsEl.textContent = "No questions yet.";
+    return;
+  }
+  questions.forEach((item, index) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "snapshot-question";
+    const rank = item.rank ?? index + 1;
+    wrapper.innerHTML = `
+      <div class="snapshot-question-header">
+        <span class="snapshot-rank">Q${rank}</span>
+        <span>${item.question}</span>
+      </div>
+      <textarea rows="2" placeholder="Your answer..."></textarea>
+    `;
+    const input = wrapper.querySelector("textarea");
+    input.value = item.answer ?? "";
+    input.addEventListener("input", () => {
+      item.answer = input.value;
+      scheduleDraftSave();
+    });
+    snapshotQuestionsEl.appendChild(wrapper);
+  });
+}
+
+function setSnapshotClarifications(clarifications = []) {
+  if (!Array.isArray(clarifications) || !clarifications.length) {
+    state.snapshotQuestions = [];
+    renderSnapshotQuestions([]);
+    return;
+  }
+  state.snapshotQuestions = clarifications.map((item, idx) => ({
+    rank: item.rank ?? idx + 1,
+    question: item.question || "",
+    answer: item.answer ?? "",
+  }));
+  renderSnapshotQuestions(state.snapshotQuestions);
+}
+
+function collectSnapshotClarifications() {
+  const clarifications = [];
+  (state.snapshotQuestions || []).forEach((item) => {
+    const question = String(item.question || "").trim();
+    const answer = typeof item.answer === "string" ? item.answer.trim() : item.answer;
+    if (!question) return;
+    if (answer === undefined || answer === null || answer === "") return;
+    clarifications.push({ question, answer });
+  });
+  return clarifications;
+}
+
+function setSnapshotBasics(topic, domain, channel, options = {}) {
+  const { triggerQuestions = true } = options;
+  if (snapshotTopicInput) snapshotTopicInput.value = topic ?? "";
+  if (snapshotDomainSelect) snapshotDomainSelect.value = domain ?? "GENERAL";
+  if (snapshotChannelSelect) snapshotChannelSelect.value = channel ?? "UNSPECIFIED";
+  if (advancedTopicInput) advancedTopicInput.value = topic ?? "";
+  if (advancedDomainSelect) advancedDomainSelect.value = domain ?? "GENERAL";
+  if (advancedChannelSelect) advancedChannelSelect.value = channel ?? "UNSPECIFIED";
+  if (triggerQuestions && (snapshotTopicInput?.value || "").trim()) {
+    scheduleSnapshotQuestions({ force: true });
+  }
+}
+
+function maybeGenerateSnapshotQuestions() {
+  if ((snapshotTopicInput?.value || "").trim() && !state.snapshotQuestions.length) {
+    scheduleSnapshotQuestions({ force: true });
+  }
+}
+
+function scheduleSnapshotQuestions(options = {}) {
+  if (snapshotQuestionTimer) clearTimeout(snapshotQuestionTimer);
+  snapshotQuestionTimer = setTimeout(() => {
+    fetchSnapshotQuestions(options);
+  }, 500);
+}
+
+async function fetchSnapshotQuestions(options = {}) {
+  if (!snapshotTopicInput || !snapshotDomainSelect || !snapshotChannelSelect) return;
+  const topic = snapshotTopicInput.value.trim();
+  if (!topic) {
+    state.snapshotQuestions = [];
+    state.snapshotQuestionKey = null;
+    renderSnapshotQuestions([]);
+    if (snapshotStatus) snapshotStatus.textContent = "Add a topic to generate questions.";
+    return;
+  }
+  const domain = snapshotDomainSelect.value || "GENERAL";
+  const channel = snapshotChannelSelect.value || "UNSPECIFIED";
+  const key = snapshotKey(topic, domain, channel);
+  if (!options.force && state.snapshotQuestionKey === key) return;
+  state.snapshotQuestionKey = key;
+  if (snapshotStatus) snapshotStatus.textContent = "Generating questions...";
+  try {
+    const res = await fetch("/cases/snapshot/questions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, domain, channel }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    const previousAnswers = new Map(
+      (state.snapshotQuestions || []).map((item) => [String(item.question || "").toLowerCase(), item.answer])
+    );
+    const questions = (data?.questions || []).map((item, idx) => {
+      const questionText = item.question || "";
+      const priorAnswer = previousAnswers.get(questionText.toLowerCase());
+      return {
+        rank: item.rank ?? idx + 1,
+        question: questionText,
+        answer: priorAnswer ?? "",
+      };
+    });
+    state.snapshotQuestions = questions;
+    renderSnapshotQuestions(questions);
+    scheduleDraftSave();
+    if (snapshotStatus) snapshotStatus.textContent = questions.length
+      ? "Questions ready."
+      : "No questions returned.";
+  } catch (err) {
+    if (snapshotStatus) snapshotStatus.textContent = `Error: ${err.message}`;
+  }
 }
 
 function stopRunPreview() {
@@ -172,6 +621,11 @@ function formatJson(obj) {
 function generateCaseId() {
   if (crypto && crypto.randomUUID) return crypto.randomUUID();
   return "case-" + Math.random().toString(16).slice(2);
+}
+
+function generateSessionId() {
+  if (crypto && crypto.randomUUID) return crypto.randomUUID();
+  return "session-" + Math.random().toString(16).slice(2);
 }
 
 function slugify(value) {
@@ -329,11 +783,14 @@ function createIssueRow(issue = {}, onChange = null) {
   row.querySelector(".remove").addEventListener("click", () => {
     row.remove();
     if (onChange) onChange();
+    scheduleDraftSave();
   });
   row.querySelectorAll("input, select").forEach((el) => {
     if (onChange) {
       el.addEventListener("change", onChange);
     }
+    el.addEventListener("change", scheduleDraftSave);
+    el.addEventListener("input", scheduleDraftSave);
   });
   const nameInput = row.querySelector("[data-field='name']");
   const idInput = row.querySelector("[data-field='issue_id']");
@@ -341,6 +798,7 @@ function createIssueRow(issue = {}, onChange = null) {
     if (!idInput.value.trim() && nameInput.value.trim()) {
       idInput.value = slugify(nameInput.value.trim());
       if (onChange) onChange();
+      scheduleDraftSave();
     }
   });
   return row;
@@ -425,6 +883,11 @@ function createParameterRow(param = {}) {
   `;
   row.querySelector(".remove").addEventListener("click", () => {
     row.remove();
+    scheduleDraftSave();
+  });
+  row.querySelectorAll("input, select").forEach((el) => {
+    el.addEventListener("change", scheduleDraftSave);
+    el.addEventListener("input", scheduleDraftSave);
   });
   return row;
 }
@@ -701,7 +1164,7 @@ const SAMPLE_CASES = [
     id: "job_offer",
     label: "Job Offer: Base Salary Negotiation",
     topic:
-      "You are negotiating a job offer by email. You have market research and a clear minimum base salary, but you do not know the employer's exact budget.",
+      "I am negotiating a job offer by email. I have market research and a clear minimum base salary, but I do not know the employer's exact budget.",
     domain: "JOB_OFFER_COMP",
     channel: "EMAIL",
     user_issues: [
@@ -746,7 +1209,7 @@ const SAMPLE_CASES = [
     id: "roommates",
     label: "Roommates: Boyfriend Visits + Cleaning",
     topic:
-      "You are burdened by Ava's boyfriend, Mike, frequently staying over and leaving shared areas messy.",
+      "I am burdened by my roommate Ava's boyfriend, Mike, frequently staying over and leaving shared areas messy.",
     domain: "GENERAL",
     channel: "IN_PERSON",
     user_issues: [
@@ -786,7 +1249,7 @@ const SAMPLE_CASES = [
     id: "ai_regulation",
     label: "Tech: Global AI Regulation",
     topic:
-      "Debate whether there should be global regulations for AI development. You are a master's student with academic readings but limited industry data.",
+      "I want to debate whether there should be global regulations for AI development. I'm a master's student with academic readings but limited industry data.",
     domain: "GENERAL",
     channel: "IN_PERSON",
     user_issues: [
@@ -824,7 +1287,7 @@ const SAMPLE_CASES = [
     id: "pineapple_pizza",
     label: "Food: Pineapple on Pizza",
     topic:
-      "Debate whether pineapple belongs on pizza. You are a TikToker who reviews food trends and cares about taste reactions.",
+      "I want to debate whether pineapple belongs on pizza. I'm a TikToker who reviews food trends and cares about taste reactions.",
     domain: "GENERAL",
     channel: "DM",
     user_issues: [
@@ -862,7 +1325,7 @@ const SAMPLE_CASES = [
     id: "kids_social_media",
     label: "Social Media: Under 13 Ban",
     topic:
-      "Debate whether children under 13 should be banned from social media. You are a concerned parent with personal experience but limited policy knowledge.",
+      "I want to debate whether children under 13 should be banned from social media. I'm a concerned parent with personal experience but limited policy knowledge.",
     domain: "GENERAL",
     channel: "IN_PERSON",
     user_issues: [
@@ -900,7 +1363,7 @@ const SAMPLE_CASES = [
     id: "tipping_culture",
     label: "Tipping Culture: Replace with Wages",
     topic:
-      "Debate whether tipping should be abolished in favor of higher base wages. You are from the UK and find US tipping norms confusing.",
+      "I want to debate whether tipping should be abolished in favor of higher base wages. I'm from the UK and find US tipping norms confusing.",
     domain: "GENERAL",
     channel: "IN_PERSON",
     user_issues: [
@@ -938,7 +1401,7 @@ const SAMPLE_CASES = [
     id: "dating_apps",
     label: "Dating Apps vs Traditional Courtship",
     topic:
-      "Debate whether dating apps have broken modern romance. You are a frustrated dater with app burnout and want healthier alternatives.",
+      "I want to debate whether dating apps have broken modern romance. I'm a frustrated dater with app burnout and want healthier alternatives.",
     domain: "GENERAL",
     channel: "DM",
     user_issues: [
@@ -976,7 +1439,7 @@ const SAMPLE_CASES = [
     id: "freelance_contract",
     label: "Freelance Contract: Fee + Timeline",
     topic:
-      "You are a freelance designer negotiating a project fee and delivery timeline by email. You know your minimum fee but not the client's budget.",
+      "I'm a freelance designer negotiating a project fee and delivery timeline by email. I know my minimum fee but not the client's budget.",
     domain: "SERVICES_CONTRACTOR",
     channel: "EMAIL",
     user_issues: [
@@ -1036,34 +1499,93 @@ const SAMPLE_CASES = [
 ];
 
 function populateSampleCaseSelect() {
-  if (!sampleCaseSelect) return;
-  sampleCaseSelect.innerHTML = "";
-  SAMPLE_CASES.forEach((sample) => {
-    const option = document.createElement("option");
-    option.value = sample.id;
-    option.textContent = sample.label;
-    sampleCaseSelect.appendChild(option);
+  const selects = [sampleCaseSelect, snapshotSampleCaseSelect].filter(Boolean);
+  selects.forEach((select) => {
+    select.innerHTML = "";
+    SAMPLE_CASES.forEach((sample) => {
+      const option = document.createElement("option");
+      option.value = sample.id;
+      option.textContent = sample.label;
+      select.appendChild(option);
+    });
   });
+}
+
+function setSampleSelection(sampleId) {
+  if (sampleCaseSelect) sampleCaseSelect.value = sampleId;
+  if (snapshotSampleCaseSelect) snapshotSampleCaseSelect.value = sampleId;
 }
 
 function applySampleCase(sample) {
   if (!sample) return;
+  setSampleSelection(sample.id);
   document.getElementById("topic").value = sample.topic;
   document.getElementById("domain").value = sample.domain;
   document.getElementById("channel").value = sample.channel;
+  setSnapshotBasics(sample.topic, sample.domain, sample.channel, { triggerQuestions: true });
+  setSnapshotClarifications([]);
+  state.sessionId = null;
+  stopQuestionPolling();
+  renderPendingQuestion(null, 0);
   setUserIssues(sample.user_issues);
   setCounterpartyIssues(sample.counterparty_issues);
   setObjectives(sample.objectives);
   setParameters(sample.parameters);
+  scheduleDraftSave();
 }
 
 function loadSampleCase() {
-  const selectedId = sampleCaseSelect?.value || SAMPLE_CASES[0]?.id;
+  const selectedId =
+    snapshotSampleCaseSelect?.value ||
+    sampleCaseSelect?.value ||
+    SAMPLE_CASES[0]?.id;
   const sample = SAMPLE_CASES.find((item) => item.id === selectedId) || SAMPLE_CASES[0];
   applySampleCase(sample);
 }
 
 document.getElementById("loadSample").addEventListener("click", loadSampleCase);
+if (snapshotLoadSampleBtn) {
+  snapshotLoadSampleBtn.addEventListener("click", loadSampleCase);
+}
+
+function resetCaseForm() {
+  document.getElementById("topic").value = "";
+  document.getElementById("domain").value = "GENERAL";
+  document.getElementById("channel").value = "UNSPECIFIED";
+  setSnapshotBasics("", "GENERAL", "UNSPECIFIED", { triggerQuestions: false });
+  setSnapshotClarifications([]);
+  state.snapshotQuestionKey = null;
+  state.sessionId = null;
+  stopQuestionPolling();
+  renderPendingQuestion(null, 0);
+  if (sampleCaseSelect) sampleCaseSelect.selectedIndex = 0;
+  if (snapshotSampleCaseSelect) snapshotSampleCaseSelect.selectedIndex = 0;
+  if (savedCaseSelect) savedCaseSelect.selectedIndex = -1;
+  if (snapshotSavedCaseSelect) snapshotSavedCaseSelect.selectedIndex = 0;
+  setUserIssues([]);
+  setCounterpartyIssues([]);
+  setParameters([]);
+  objectiveType.value = "OFFER_VECTOR";
+  document.getElementById("objectiveTargetSingle").value = "";
+  document.getElementById("objectiveReservationSingle").value = "";
+  renderObjectiveInputs();
+  state.caseId = null;
+  state.caseData = null;
+  updateStatus("Case reset.");
+  clearDraftState();
+  updateAskInfoBudgetStatus(parseInt(maxQuestionsInput?.value, 10) || 0);
+}
+
+function resetCounterpartyControls() {
+  document.getElementById("policyRigidity").value = "unknown";
+  document.getElementById("cooperativeness").value = "unknown";
+  document.getElementById("timePressure").value = "unknown";
+  document.getElementById("authorityClarity").value = "unknown";
+  document.getElementById("personaDistribution").textContent = "";
+  const hintStatus = document.getElementById("counterpartyHintStatus");
+  if (hintStatus) hintStatus.textContent = "";
+  renderCounterpartyHints();
+}
 
 function setCounterpartyControlsFromCase(caseData) {
   const answers = caseData?.counterparty_assumptions?.calibration?.answers || {};
@@ -1084,11 +1606,25 @@ function setCounterpartyControlsFromCase(caseData) {
   if (authEl) authEl.value = values.authority_clarity || "unknown";
 }
 
-function applySavedCase(caseData) {
+async function applySavedCase(caseData) {
   if (!caseData) return;
+  if (snapshotSavedCaseSelect && caseData.case_id) {
+    snapshotSavedCaseSelect.value = caseData.case_id;
+  }
   document.getElementById("topic").value = caseData.topic || "";
   document.getElementById("domain").value = caseData.domain || "GENERAL";
   document.getElementById("channel").value = caseData.channel || "UNSPECIFIED";
+  const clarifications = caseData.clarifications || [];
+  setSnapshotBasics(
+    caseData.topic || "",
+    caseData.domain || "GENERAL",
+    caseData.channel || "UNSPECIFIED",
+    { triggerQuestions: !clarifications.length }
+  );
+  setSnapshotClarifications(clarifications);
+  state.sessionId = null;
+  stopQuestionPolling();
+  renderPendingQuestion(null, 0);
   setUserIssues(caseData.user_issues || caseData.issues || []);
   setCounterpartyIssues(caseData.counterparty_issues || caseData.issues || []);
   if (caseData.objectives) {
@@ -1101,27 +1637,33 @@ function applySavedCase(caseData) {
   state.caseId = caseData.case_id || null;
   state.caseData = caseData;
   updateStatus(state.caseId ? `Loaded case: ${state.caseId}` : "Loaded case.");
+  const budgetValue = parseInt(maxQuestionsInput?.value, 10);
+  updateAskInfoBudgetStatus(Number.isNaN(budgetValue) ? 0 : budgetValue);
+  scheduleDraftSave();
+  await autoloadCaseData(state.caseId);
 }
 
 function populateSavedCaseSelect(cases = []) {
-  if (!savedCaseSelect) return;
-  savedCaseSelect.innerHTML = "";
-  if (!cases.length) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "No saved cases";
-    savedCaseSelect.appendChild(option);
-    return;
-  }
-  cases.forEach((caseItem) => {
-    const option = document.createElement("option");
-    option.value = caseItem.case_id;
-    const title = caseItem.topic || "Untitled case";
-    const status = caseItem.status || "DRAFT";
-    const domain = caseItem.domain || "GENERAL";
-    const shortId = caseItem.case_id ? caseItem.case_id.slice(0, 8) : "unknown";
-    option.textContent = `${title} · ${domain} · ${status} · ${shortId}`;
-    savedCaseSelect.appendChild(option);
+  const selects = [savedCaseSelect, snapshotSavedCaseSelect].filter(Boolean);
+  selects.forEach((select) => {
+    select.innerHTML = "";
+    if (!cases.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No saved cases";
+      select.appendChild(option);
+      return;
+    }
+    cases.forEach((caseItem) => {
+      const option = document.createElement("option");
+      option.value = caseItem.case_id;
+      const title = caseItem.topic || "Untitled case";
+      const status = caseItem.status || "DRAFT";
+      const domain = caseItem.domain || "GENERAL";
+      const shortId = caseItem.case_id ? caseItem.case_id.slice(0, 8) : "unknown";
+      option.textContent = `${title} · ${domain} · ${status} · ${shortId}`;
+      select.appendChild(option);
+    });
   });
 }
 
@@ -1155,11 +1697,78 @@ document.getElementById("loadSavedCase").addEventListener("click", async () => {
     const res = await fetch(`/cases/${caseId}`);
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    applySavedCase(data);
+    await applySavedCase(data);
   } catch (err) {
     updateStatus(`Error: ${err.message}`);
   }
 });
+
+if (snapshotLoadSavedCaseBtn) {
+  snapshotLoadSavedCaseBtn.addEventListener("click", async () => {
+    if (!snapshotSavedCaseSelect) return;
+    const selected = Array.from(snapshotSavedCaseSelect.selectedOptions)
+      .map((option) => option.value)
+      .filter(Boolean);
+    if (!selected.length) {
+      updateStatus("No saved case selected.");
+      return;
+    }
+    if (selected.length > 1) {
+      updateStatus("Select a single saved case to load.");
+      return;
+    }
+    const caseId = selected[0];
+    try {
+      const res = await fetch(`/cases/${caseId}`);
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      await applySavedCase(data);
+    } catch (err) {
+      updateStatus(`Error: ${err.message}`);
+    }
+  });
+}
+
+if (snapshotDeleteSavedCasesBtn) {
+  snapshotDeleteSavedCasesBtn.addEventListener("click", async () => {
+    if (!snapshotSavedCaseSelect) return;
+    const selected = Array.from(snapshotSavedCaseSelect.selectedOptions)
+      .map((option) => option.value)
+      .filter(Boolean);
+    if (!selected.length) {
+      updateStatus("Select one or more cases to delete.");
+      return;
+    }
+    const confirmed = window.confirm(`Delete ${selected.length} case(s)? This cannot be undone.`);
+    if (!confirmed) return;
+    try {
+      const res = await fetch("/cases/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ case_ids: selected }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (selected.includes(state.caseId)) {
+        state.caseId = null;
+        state.caseData = null;
+      }
+      updateStatus(
+        `Deleted ${data.deleted_cases || 0} case(s), ${data.deleted_runs || 0} run(s), ${data.deleted_traces || 0} trace(s).`
+      );
+      refreshSavedCases();
+    } catch (err) {
+      updateStatus(`Error: ${err.message}`);
+    }
+  });
+}
+
+if (snapshotClearDraftBtn) {
+  snapshotClearDraftBtn.addEventListener("click", () => {
+    clearDraftState();
+    updateStatus("Draft cleared.");
+  });
+}
 
 document.getElementById("deleteSavedCases").addEventListener("click", async () => {
   if (!savedCaseSelect) return;
@@ -1217,9 +1826,31 @@ document.getElementById("addParameter").addEventListener("click", () => {
 });
 
 objectiveType.addEventListener("change", renderObjectiveInputs);
+objectiveType.addEventListener("change", scheduleDraftSave);
+
+objectiveVectorSection.addEventListener("input", scheduleDraftSave);
+objectiveVectorSection.addEventListener("change", scheduleDraftSave);
+objectiveSingleSection.addEventListener("input", scheduleDraftSave);
+objectiveSingleSection.addEventListener("change", scheduleDraftSave);
+
+userIssuesEditor.addEventListener("input", scheduleDraftSave);
+userIssuesEditor.addEventListener("change", scheduleDraftSave);
+counterpartyIssuesEditor.addEventListener("input", scheduleDraftSave);
+counterpartyIssuesEditor.addEventListener("change", scheduleDraftSave);
+parametersEditor.addEventListener("input", scheduleDraftSave);
+parametersEditor.addEventListener("change", scheduleDraftSave);
+
+const policyRigidityEl = document.getElementById("policyRigidity");
+const cooperativenessEl = document.getElementById("cooperativeness");
+const timePressureEl = document.getElementById("timePressure");
+const authorityClarityEl = document.getElementById("authorityClarity");
+if (policyRigidityEl) policyRigidityEl.addEventListener("change", scheduleDraftSave);
+if (cooperativenessEl) cooperativenessEl.addEventListener("change", scheduleDraftSave);
+if (timePressureEl) timePressureEl.addEventListener("change", scheduleDraftSave);
+if (authorityClarityEl) authorityClarityEl.addEventListener("change", scheduleDraftSave);
 
 const createCaseBtn = document.getElementById("createCase");
-createCaseBtn.addEventListener("click", async () => {
+async function handleCreateCase() {
   const missing = validateCaseInputs();
   if (missing.length) {
     updateStatus(`Missing: ${missing.join(", ")}`);
@@ -1230,6 +1861,7 @@ createCaseBtn.addEventListener("click", async () => {
     const counterpartyIssues = collectCounterpartyIssues();
     const objectives = collectObjectives();
     const parameters = collectParameters();
+    const clarifications = collectSnapshotClarifications();
     const caseId = generateCaseId();
     const payload = {
       case_id: caseId,
@@ -1241,6 +1873,7 @@ createCaseBtn.addEventListener("click", async () => {
       channel: document.getElementById("channel").value,
       parameters: parameters,
       objectives: objectives,
+      clarifications: clarifications,
       user_issues: userIssues,
       counterparty_issues: counterpartyIssues,
       counterparty_assumptions: {
@@ -1269,12 +1902,21 @@ createCaseBtn.addEventListener("click", async () => {
     const data = await res.json();
     state.caseId = data.case_id;
     state.caseData = data;
+    state.sessionId = null;
+    renderPendingQuestion(null, 0);
     updateStatus(`Case created: ${state.caseId}`);
     refreshSavedCases();
   } catch (err) {
     updateStatus(`Error: ${err.message}`);
   }
-});
+}
+
+if (createCaseBtn) {
+  createCaseBtn.addEventListener("click", handleCreateCase);
+}
+if (snapshotCreateCaseBtn) {
+  snapshotCreateCaseBtn.addEventListener("click", handleCreateCase);
+}
 
 document.getElementById("validateCase").addEventListener("click", () => {
   const missing = validateCaseInputs();
@@ -1307,24 +1949,43 @@ document.getElementById("runSim").addEventListener("click", async () => {
   }
   const runs = parseInt(document.getElementById("runs").value, 10) || 1;
   const maxTurns = parseInt(document.getElementById("max_turns").value, 10);
+  let maxQuestions = parseInt(maxQuestionsInput?.value, 10);
+  if (Number.isNaN(maxQuestions)) maxQuestions = 0;
+  updateAskInfoBudgetStatus(maxQuestions);
+  state.sessionId = generateSessionId();
   const mode = "FAST";
   await startRunPreview(state.caseId, runs);
+  startQuestionPolling();
+  fetchPendingQuestion();
   try {
     const res = await fetch(`/cases/${state.caseId}/simulate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ runs, max_turns: maxTurns, mode }),
+      body: JSON.stringify({
+        runs,
+        max_turns: maxTurns,
+        mode,
+        max_questions: maxQuestions,
+        session_id: state.sessionId,
+      }),
     });
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     state.runs = data;
+    state.sessionId = state.sessionId || data?.[0]?.session_id || null;
     renderRuns();
     stopRunPreview();
-    document.getElementById("runProgress").textContent = `Completed ${data.length} runs.`;
+    await fetchPendingQuestion();
+    const pausedCount = data.filter((run) => run.status === "PAUSED").length;
+    const runStatusText = pausedCount
+      ? `Finished ${data.length} runs (${pausedCount} paused for questions).`
+      : `Completed ${data.length} runs.`;
+    document.getElementById("runProgress").textContent = runStatusText;
     const meta = document.getElementById("runProgressMeta");
     if (meta) meta.textContent = "";
   } catch (err) {
     stopRunPreview();
+    stopQuestionPolling();
     document.getElementById("runProgress").textContent = `Error: ${err.message}`;
     const meta = document.getElementById("runProgressMeta");
     if (meta) meta.textContent = "";
@@ -1344,7 +2005,8 @@ function renderRuns() {
     const errorBadge = errorCount
       ? `<span class="run-error-badge">⚠ ${errorCount} error${errorCount === 1 ? "" : "s"}</span>`
       : "";
-    row.innerHTML = `<strong>${run.outcome}</strong> | persona: ${run.persona_id} | utility: ${run.user_utility.toFixed(2)} | turns: ${run.turns.length} ${errorBadge}`;
+    const statusText = run.status && run.status !== "COMPLETED" ? ` | status: ${run.status}` : "";
+    row.innerHTML = `<strong>${run.outcome}</strong>${statusText} | persona: ${run.persona_id} | utility: ${run.user_utility.toFixed(2)} | turns: ${run.turns.length} ${errorBadge}`;
 
     if (errorCount) {
       const errorButton = document.createElement("button");
@@ -1474,8 +2136,35 @@ if (debugSearchClear) {
   });
 }
 
+if (debugFilterFallbacks) {
+  debugFilterFallbacks.addEventListener("click", () => {
+    filterRunsByFallback(true);
+  });
+}
+
+if (debugFilterNonFallbacks) {
+  debugFilterNonFallbacks.addEventListener("click", () => {
+    filterRunsByFallback(false);
+  });
+}
+
+if (resetCaseButton) {
+  resetCaseButton.addEventListener("click", () => {
+    resetCaseForm();
+  });
+}
+
+if (resetCounterpartyButton) {
+  resetCounterpartyButton.addEventListener("click", () => {
+    resetCounterpartyControls();
+  });
+}
+
 populateSampleCaseSelect();
-loadSampleCase();
+const restoredDraft = loadDraftState();
+if (!restoredDraft) {
+  loadSampleCase();
+}
 renderCounterpartyHints();
 refreshSavedCases();
 refreshDebugRuns();
@@ -1658,6 +2347,18 @@ async function loadInsightConversation(runId) {
     const turns = trace?.turn_traces || [];
     renderInsightConversation(turns);
   } catch (err) {
+    try {
+      const runRes = await fetch(`/runs/${runId}`);
+      if (!runRes.ok) throw new Error(await runRes.text());
+      const runData = await runRes.json();
+      const turns = runData?.run?.turns || [];
+      if (turns.length) {
+        renderInsightConversation(turns);
+        return;
+      }
+    } catch (runErr) {
+      // fall through to error message below
+    }
     container.textContent = `Unable to load conversation: ${err.message}`;
   }
 }
@@ -1761,6 +2462,91 @@ async function searchDebugTraces() {
   }
 }
 
+async function autoloadCaseData(caseId) {
+  if (!caseId) return;
+  await Promise.all([loadRunsForCase(caseId), loadInsightsForCase(caseId)]);
+}
+
+async function loadRunsForCase(caseId) {
+  const runStatus = document.getElementById("runProgress");
+  const runMeta = document.getElementById("runProgressMeta");
+  if (runStatus) runStatus.textContent = "Loading runs...";
+  if (runMeta) runMeta.textContent = "";
+  try {
+    const res = await fetch(`/cases/${caseId}/runs`);
+    if (!res.ok) throw new Error(await res.text());
+    const runs = await res.json();
+    state.runs = runs || [];
+    const sessionCandidate = [...state.runs].reverse().find((run) => run.session_id);
+    state.sessionId = sessionCandidate?.session_id || null;
+    renderRuns();
+    if (runStatus) runStatus.textContent = `Loaded ${state.runs.length} runs.`;
+    if (runMeta) runMeta.textContent = "";
+    refreshDebugRuns();
+    await fetchPendingQuestion();
+    updateAskInfoBudgetStatus(parseInt(maxQuestionsInput?.value, 10) || 0);
+  } catch (err) {
+    if (runStatus) runStatus.textContent = `Error loading runs: ${err.message}`;
+  }
+}
+
+async function loadInsightsForCase(caseId) {
+  const status = document.getElementById("insightsStatus");
+  if (status) status.textContent = "Loading insights...";
+  try {
+    const res = await fetch(`/cases/${caseId}/insights`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    document.getElementById("insightsOutput").textContent = formatJson(data);
+    renderInsights(data);
+    if (status) status.textContent = `Loaded ${data?.turns_to_termination?.length || 0} runs.`;
+  } catch (err) {
+    if (status) status.textContent = `Error: ${err.message}`;
+  }
+}
+
+async function filterRunsByFallback(expectFallback) {
+  if (!debugRunSelect || !state.caseId) {
+    if (debugStatus) debugStatus.textContent = "Run a simulation first.";
+    return;
+  }
+  const runs = state.debugRunsAll || state.runs || [];
+  if (!runs.length) {
+    populateDebugRuns([]);
+    if (debugStatus) debugStatus.textContent = "No runs available.";
+    return;
+  }
+  if (debugStatus) {
+    debugStatus.textContent = expectFallback ? "Filtering runs with fallback..." : "Filtering runs without fallback...";
+  }
+  const matches = [];
+  for (const run of runs) {
+    if (!run?.run_id) continue;
+    let haystack = debugTraceCache.get(run.run_id);
+    if (!haystack) {
+      try {
+        const res = await fetch(`/runs/${run.run_id}/trace`);
+        if (!res.ok) throw new Error(await res.text());
+        const trace = await res.json();
+        haystack = JSON.stringify(trace).toLowerCase();
+        debugTraceCache.set(run.run_id, haystack);
+      } catch (err) {
+        continue;
+      }
+    }
+    const hasFallback = haystack.includes("\"fallback_used\": true");
+    if (hasFallback === expectFallback) {
+      matches.push(run);
+    }
+  }
+  populateDebugRuns(matches);
+  if (debugStatus) {
+    debugStatus.textContent = matches.length
+      ? `Found ${matches.length} run(s).`
+      : "No runs matched the fallback filter.";
+  }
+}
+
 function mean(values) {
   if (!values.length) return 0;
   const total = values.reduce((sum, value) => sum + value, 0);
@@ -1827,6 +2613,13 @@ function renderTraceFlow(trace) {
       actionBadge.className = "trace-action";
       actionBadge.textContent = `Action: ${actionType}`;
       message.appendChild(actionBadge);
+    }
+    if (parsed.fallback_used) {
+      const fallbackBadge = document.createElement("div");
+      fallbackBadge.className = "trace-action";
+      const reason = parsed.fallback_reason ? ` (${parsed.fallback_reason})` : "";
+      fallbackBadge.textContent = `Fallback used${reason}`;
+      message.appendChild(fallbackBadge);
     }
     const messageText = parsed.message_text || parsed.text || "";
     const messageBody = document.createElement("div");

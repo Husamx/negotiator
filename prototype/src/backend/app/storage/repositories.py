@@ -93,6 +93,22 @@ class RunRepository:
         conn.close()
         return run_data
 
+    def update(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an existing run record."""
+        conn = get_connection()
+        conn.execute(
+            "UPDATE runs SET persona_id = ?, outcome = ?, data = ? WHERE run_id = ?",
+            (
+                run_data.get("persona_id"),
+                run_data.get("outcome"),
+                safe_json_dumps(run_data),
+                run_data["run_id"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+        return run_data
+
     def list_for_case(self, case_id: str) -> List[Dict[str, Any]]:
         """List all runs associated with a case.
         """
@@ -166,6 +182,108 @@ class TraceRepository:
             f"DELETE FROM traces WHERE run_id IN ({placeholders})",
             tuple(run_ids),
         )
+        conn.commit()
+        conn.close()
+        return cur.rowcount or 0
+
+
+class PendingQuestionRepository:
+    def add(self, question_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist a pending question."""
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO pending_questions
+            (question_id, case_id, run_id, session_id, status, asked_by, question, created_at, answer, answered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                question_data["question_id"],
+                question_data["case_id"],
+                question_data["run_id"],
+                question_data["session_id"],
+                question_data.get("status", "PENDING"),
+                question_data.get("asked_by"),
+                question_data.get("question"),
+                question_data.get("created_at"),
+                question_data.get("answer"),
+                question_data.get("answered_at"),
+            ),
+        )
+        conn.commit()
+        conn.close()
+        return question_data
+
+    def list_for_case(self, case_id: str, session_id: Optional[str] = None, status: str = "PENDING") -> List[Dict[str, Any]]:
+        """List pending questions for a case."""
+        conn = get_connection()
+        params: List[Any] = [case_id]
+        query = "SELECT * FROM pending_questions WHERE case_id = ?"
+        if session_id:
+            query += " AND session_id = ?"
+            params.append(session_id)
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_at ASC"
+        rows = conn.execute(query, tuple(params)).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def next_for_case(self, case_id: str, session_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Return the oldest pending question for a case/session."""
+        conn = get_connection()
+        params: List[Any] = [case_id, "PENDING"]
+        query = "SELECT * FROM pending_questions WHERE case_id = ? AND status = ?"
+        if session_id:
+            query += " AND session_id = ?"
+            params.append(session_id)
+        query += " ORDER BY created_at ASC LIMIT 1"
+        row = conn.execute(query, tuple(params)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def get(self, question_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a question by id."""
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT * FROM pending_questions WHERE question_id = ?",
+            (question_id,),
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def mark_answered(self, question_id: str, answer: str, answered_at: str) -> Optional[Dict[str, Any]]:
+        """Mark a pending question as answered."""
+        conn = get_connection()
+        conn.execute(
+            """
+            UPDATE pending_questions
+            SET status = ?, answer = ?, answered_at = ?
+            WHERE question_id = ?
+            """,
+            ("ANSWERED", answer, answered_at, question_id),
+        )
+        conn.commit()
+        conn.close()
+        return self.get(question_id)
+
+    def count_for_session(self, session_id: str) -> int:
+        """Count all asked questions for a session."""
+        if not session_id:
+            return 0
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT COUNT(*) as total FROM pending_questions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        conn.close()
+        return int(row["total"]) if row else 0
+
+    def delete_for_case(self, case_id: str) -> int:
+        """Delete questions for a case."""
+        conn = get_connection()
+        cur = conn.execute("DELETE FROM pending_questions WHERE case_id = ?", (case_id,))
         conn.commit()
         conn.close()
         return cur.rowcount or 0

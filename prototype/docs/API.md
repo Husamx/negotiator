@@ -1,6 +1,7 @@
 # API (Minimal Roleplay)
 
 All endpoints use JSON.
+Agent roles and prompts are listed in `docs/AGENTS.md`.
 
 ## POST /cases
 

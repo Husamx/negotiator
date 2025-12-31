@@ -117,6 +117,11 @@ class Outcome(str, Enum):
     NEUTRAL = "NEUTRAL"
 
 
+class RunStatus(str, Enum):
+    COMPLETED = "COMPLETED"
+    PAUSED = "PAUSED"
+
+
 
 class StrategyUI(BaseModelWithExtra):
     card_title: str
@@ -327,6 +332,7 @@ class Turn(BaseModelWithExtra):
     outcome: Outcome
     strategy_suggestions: Optional[List[Dict[str, Any]]] = None
     used_strategies: Optional[List[str]] = None
+    action: Optional[Dict[str, Any]] = None
 
 
 class SimulationRun(BaseModelWithExtra):
@@ -338,6 +344,11 @@ class SimulationRun(BaseModelWithExtra):
     outcome: Outcome
     user_utility: float
     summary: Optional[Dict[str, Any]] = None
+    status: RunStatus = RunStatus.COMPLETED
+    session_id: Optional[str] = None
+    pending_question_id: Optional[str] = None
+    max_turns: Optional[int] = None
+    max_questions: Optional[int] = None
 
 
 class PromptVersion(BaseModelWithExtra):
@@ -378,6 +389,8 @@ class SimulationRequest(BaseModelWithExtra):
     runs: int
     max_turns: int
     mode: str
+    max_questions: Optional[int] = None
+    session_id: Optional[str] = None
 
 
 class CalibrationRequest(BaseModelWithExtra):
